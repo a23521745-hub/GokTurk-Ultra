@@ -103,13 +103,18 @@ def load_yaml(path: str | os.PathLike[str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # teachers
 # ---------------------------------------------------------------------------
+#: Semantic teacher roles used for task routing (see configs/teachers.yaml).
+KNOWN_TEACHER_ROLES = ("general", "reasoning", "code")
+
+
 @dataclass
 class TeacherModelConfig:
     """One teacher model reachable through an OpenAI-compatible endpoint."""
 
     name: str
     model: str
-    role: str = "teacher"
+    #: One role or several: "general", "reasoning", "code" (comma separated or list).
+    role: Any = "general"
     weight: float = 1.0
     temperature: float = 0.7
     top_p: float = 0.95
@@ -123,6 +128,7 @@ class TeacherModelConfig:
         # An empty model id is allowed at load time only so that an
         # unconfigured template can be inspected with --dry-run; a real
         # generation run calls TeachersConfig.require_ready() first.
+        normalize_roles(self.role)  # validates role names
         if self.weight <= 0:
             raise ConfigError(f"{path} ({self.name}): weight must be > 0")
         if not 0.0 <= self.temperature <= 2.0:
@@ -132,16 +138,36 @@ class TeacherModelConfig:
         if self.max_tokens < 1:
             raise ConfigError(f"{path} ({self.name}): max_tokens must be >= 1")
 
+    def roles(self) -> list[str]:
+        return normalize_roles(self.role)
+
     def to_public_dict(self) -> dict[str, Any]:
         """Metadata safe to write into a dataset record (no secrets)."""
         return {
             "name": self.name,
             "model": self.model,
-            "role": self.role,
+            "role": self.roles(),
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,
         }
+
+
+def normalize_roles(role: Any) -> list[str]:
+    """Parse a teacher role declaration into a normalised list."""
+    if isinstance(role, str):
+        parts = [p.strip() for p in role.replace(";", ",").split(",")]
+    elif isinstance(role, (list, tuple)):
+        parts = [str(p).strip() for p in role]
+    else:
+        parts = []
+    cleaned = [p for p in parts if p]
+    unknown = sorted(set(cleaned) - set(KNOWN_TEACHER_ROLES))
+    if unknown:
+        raise ConfigError(
+            f"unknown teacher role(s) {unknown}; known: {list(KNOWN_TEACHER_ROLES)}"
+        )
+    return cleaned or ["general"]
 
 
 @dataclass

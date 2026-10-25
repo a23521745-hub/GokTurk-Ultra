@@ -302,3 +302,36 @@ def test_smoke_training_runs_end_to_end(tmp_path: Path):
     assert (out / "adapter").is_dir()
     # A smoke run must never claim to be a real trained model.
     assert manifest["config"]["model"]["name_or_path"] != "openai/gpt-oss-20b"
+
+
+# ---------------------------------------------------------------------------
+# backend selection
+# ---------------------------------------------------------------------------
+def test_unsloth_backend_is_blocked_without_unsloth(tmp_path, capsys):
+    """No silent fallback: the explicit backend must fail loudly."""
+    from gokturk.train import run_training
+
+    write_jsonl(
+        tmp_path / "train.jsonl",
+        [make_record("1", prompt="merhaba dünya", response="kod yaz lütfen")],
+    )
+    cfg = _cfg(tmp_path, "qlora")
+    code = run_training(cfg, backend="unsloth")
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "Eğitim başlatılmadı" in err
+
+
+def test_unknown_backend_raises(tmp_path):
+    from gokturk.train import run_training
+
+    with pytest.raises(ValueError, match="unknown backend"):
+        run_training(_cfg(tmp_path), backend="magic")
+
+
+def test_plan_only_reports_backend(tmp_path, capsys):
+    from gokturk.train import run_training
+
+    run_training(_cfg(tmp_path), plan_only=True, backend="unsloth")
+    out = capsys.readouterr().out
+    assert '"backend": "unsloth"' in out

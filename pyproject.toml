@@ -32,6 +32,8 @@ train = [
   "tokenizers>=0.19",
 ]
 qlora = ["bitsandbytes>=0.43"]
+# 4-bit QLoRA for gpt-oss on consumer GPUs (≈14 GB VRAM). Heavy, CUDA-only.
+unsloth = ["unsloth"]
 dev = ["pytest>=7.4", "ruff>=0.5"]
 
 [project.scripts]

@@ -96,6 +96,31 @@ def test_readme_documents_install_and_known_limitations():
     assert "eğitilmiş model ağırlığı" in readme.lower()
 
 
+def test_sample_datasets_are_schema_valid():
+    """Every committed sample file must pass the same gate as real data."""
+    from gokturk.data_quality import assess_record, read_jsonl
+
+    files = sorted((ROOT / "data" / "samples").glob("*.jsonl"))
+    assert files, "no sample data files found"
+    for path in files:
+        records, issues = read_jsonl(path)
+        assert not issues, f"{path.name}: parse errors {issues}"
+        assert records, f"{path.name}: empty"
+        for record in records:
+            assert assess_record(record) == [], (path.name, record.get("id"))
+
+
+def test_new_task_families_are_documented_in_configs():
+    from gokturk.task_specs import family_ids
+
+    training = (ROOT / "configs" / "training_unsloth_t4.yaml").read_text(encoding="utf-8")
+    assert "load_in_4bit: true" in training
+    assert "unsloth" in training.lower()
+    # The Unsloth config must not silently claim a full run by default.
+    assert "max_steps: 60" in training
+    assert set(family_ids()) >= {"coding", "system_architecture", "turkish_advanced"}
+
+
 def test_license_is_apache_2():
     license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
     assert "Apache License" in license_text

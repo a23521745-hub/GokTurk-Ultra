@@ -368,6 +368,18 @@ def _classify_http_error(status: int, body: str) -> TeacherError:
 # ---------------------------------------------------------------------------
 # pool
 # ---------------------------------------------------------------------------
+def normalize_roles(role: Any) -> tuple[str, ...]:
+    """Teachers may declare one role or several (``"reasoning,code"`` / list)."""
+    if isinstance(role, str):
+        parts = [part.strip() for part in role.replace(";", ",").split(",")]
+    elif isinstance(role, (list, tuple)):
+        parts = [str(part).strip() for part in role]
+    else:  # pragma: no cover - defensive
+        parts = []
+    cleaned = tuple(part for part in parts if part)
+    return cleaned or ("general",)
+
+
 class TeacherPool:
     """Assigns a teacher model to each request according to configured weights.
 
@@ -391,6 +403,9 @@ class TeacherPool:
             # weight is a float; expand to integer slots with 100 slots per unit
             self._weighted.extend([m.name] * max(1, int(round(m.weight * 100))))
         self._by_name = {m.name: m for m in self.models}
+        self._roles: dict[str, tuple[str, ...]] = {
+            m.name: normalize_roles(m.role) for m in self.models
+        }
         self._failures_in_a_row = 0
 
     def health_check(self) -> dict[str, Any]:
@@ -406,22 +421,96 @@ class TeacherPool:
         report["ok"] = all(v.get("ok") for v in report["teachers"].values())
         return report
 
-    def ask(self, system_prompt: str, user_prompt: str) -> tuple[TeacherResponse, TeacherModelConfig]:
-        """Send one request, letting the pool choose the teacher."""
-        teacher = self._pick()
+    def ask(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        role: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[TeacherResponse, TeacherModelConfig]:
+        """Send one request, letting the pool choose the teacher.
+
+        ``role`` constrains the choice to teachers whose configured ``role``
+        list contains that semantic role (``reasoning``, ``code``, ``general``).
+        When no teacher declares the role, every teacher stays eligible and the
+        fallback is logged -- the pool never invents a model.
+        """
+        teacher, _excluded = self.pick(role=role, exclude=set())
+        if teacher is None:  # pragma: no cover - defensive
+            raise TeacherConfigError("no teacher available for this request")
         resp = self.client.chat(
             teacher.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=teacher.temperature,
+            temperature=teacher.temperature if temperature is None else temperature,
             top_p=teacher.top_p,
-            max_tokens=teacher.max_tokens,
+            max_tokens=teacher.max_tokens if max_tokens is None else max_tokens,
         )
         resp.teacher_name = teacher.name
         self._failures_in_a_row = 0
         return resp, teacher
+
+    def ask_with_fallback(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        role: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[TeacherResponse, TeacherModelConfig]:
+        """Try the role-preferred teacher first, then any other teacher once."""
+        tried: set[str] = set()
+        last_error: Exception | None = None
+        for _ in range(len(self.models)):
+            teacher, _ = self.pick(role=role, exclude=tried)
+            if teacher is None:
+                break
+            tried.add(teacher.name)
+            try:
+                resp = self.client.chat(
+                    teacher.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=teacher.temperature if temperature is None else temperature,
+                    top_p=teacher.top_p,
+                    max_tokens=teacher.max_tokens if max_tokens is None else max_tokens,
+                )
+            except (TeacherAuthError, TeacherRequestError):
+                raise
+            except RETRYABLE_ERRORS as exc:
+                last_error = exc
+                LOGGER.warning("öğretmen %s başarısız (%s); diğeri denenecek", teacher.name, exc)
+                continue
+            resp.teacher_name = teacher.name
+            self._failures_in_a_row = 0
+            return resp, teacher
+        if last_error is not None:
+            raise last_error
+        raise TeacherConfigError("no teacher available for this request")
+
+    def pick(
+        self, *, role: str | None = None, exclude: set[str] | None = None
+    ) -> tuple[TeacherModelConfig | None, list[str]]:
+        """Choose a teacher honouring ``role``; returns (teacher, excluded_names)."""
+        excluded = exclude or set()
+        pool = [m for m in self.models if m.name not in excluded]
+        if not pool:
+            return None, sorted(excluded)
+        roles = getattr(self, "_roles", {})
+        if role:
+            matching = [m for m in pool if role in roles.get(m.name, ())]
+            if matching:
+                weights = [max(1, int(round(m.weight * 100))) for m in matching]
+                return self._rng.choices(matching, weights=weights, k=1)[0], sorted(excluded)
+        weights = [max(1, int(round(m.weight * 100))) for m in pool]
+        return self._rng.choices(pool, weights=weights, k=1)[0], sorted(excluded)
 
     def register_failure(self) -> int:
         self._failures_in_a_row += 1
@@ -435,5 +524,7 @@ class TeacherPool:
         return self._failures_in_a_row
 
     def _pick(self) -> TeacherModelConfig:
-        name = self._rng.choice(self._weighted)
-        return self._by_name[name]
+        teacher, _ = self.pick()
+        if teacher is None:  # pragma: no cover - defensive
+            raise TeacherConfigError("no teacher configured")
+        return teacher

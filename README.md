@@ -13,10 +13,12 @@ model/ajan prototipi için **veri, eğitim ve değerlendirme altyapısı**.
 | Bileşen | Dosya | Ne yapar |
 | --- | --- | --- |
 | Öğretmen adaptörü | `src/gokturk/teachers.py` | OpenAI-uyumlu sohbet API'si; timeout, 429/5xx tekrarı, 401'de anında durma, oran sınırı |
-| Veri üretimi | `src/gokturk/data_generation.py` | Türkçe tohumlardan iki adımlı (taslak + yanıt) sentetik veri; yarıda kalırsa güvenli durur, devam ettirilebilir |
+| Veri üretimi (basic) | `src/gokturk/data_generation.py` | Türkçe tohumlardan iki adımlı (taslak + yanıt) sentetik veri; yarıda kalırsa güvenli durur, devam ettirilebilir |
+| Veri üretimi (PRO) | `src/gokturk/data_generation.py` + `task_specs.py` + `curriculum.py` | 10 görev ailesi, N aday örnekleme, öz-eleştiri/onarım, rol yönlendirme, plan + maliyet tahmini |
+| Unsloth arka ucu | `src/gokturk/unsloth_backend.py` | gpt-oss-20b için 4-bit QLoRA (≈14 GB VRAM); API sürüm kaymasına dayanıklı |
 | Veri kalitesi | `src/gokturk/data_quality.py` | Şema doğrulama, bozuk JSON/boş/uzun/reddetme/tekrar filtreleri, yakın-tekrar temizliği, sızıntısız gruplu bölme |
 | Ortam denetimi | `src/gokturk/env_check.py` | GPU/CUDA/VRAM/paket/mimari denetimi + bellek tahmini; engelleyici bulguları raporlar |
-| Eğitim | `src/gokturk/train.py` | LoRA/QLoRA/full; prompt maskeleme; ön denetim geçmezse **başlamaz**; CPU duman testi |
+| Eğitim | `src/gokturk/train.py` | `--backend transformers` (LoRA/QLoRA/full) veya `--backend unsloth` (4-bit QLoRA); prompt maskeleme; ön denetim geçmezse **başlamaz**; CPU duman testi |
 | Değerlendirme | `src/gokturk/evaluate.py` | Biçim kontrolü, sabit Türkçe test setinde kural tabanlı skorlama, opsiyonel (doğrulanmamış) yargıç |
 | Kaggle deneyi | `notebooks/kaggle_training.ipynb` | Ortam → paketler → veri doğrulama → duman testi → dürüst tanılama → çıktı kaydı |
 
@@ -31,7 +33,8 @@ pip install -e .
 
 # Eğitim için ek bağımlılıklar (CUDA ortamı)
 pip install -e ".[train]"
-pip install -e ".[qlora]"     # QLoRA / 4-bit NF4 (bitsandbytes, yalnızca CUDA)
+pip install -e ".[qlora]"      # generic QLoRA / 4-bit NF4 (bitsandbytes)
+pip install -e ".[unsloth]"    # 4-bit QLoRA, gpt-oss'u ~14 GB VRAM'e sığdırır
 
 # Geliştirme
 pip install -e ".[dev]"
@@ -65,7 +68,45 @@ python -m gokturk.data_quality --data data/processed/train.jsonl \
   --review-sample 30 --review-out reports/review.md
 ```
 
-## Eğitim verisi üretimi (API anahtarı gerekir)
+## Profesyonel sentetik veri seti (PRO modu)
+
+On görev ailesi — kodlama, hata ayıklama, akıl yürütme, **ileri düzey Türkçe**,
+**sistem mimarisi**, araç çağırma, talimat takibi, özetleme, yeniden yazma,
+çeviri — üzerinde planlı üretim. Plan ve maliyet tahmini **ağa çıkmaz**:
+
+```bash
+python -m gokturk.data_generation --list-families
+
+python -m gokturk.data_generation --mode pro --target 10000 \
+  --plan-only --plan-out data/raw/plan.json
+# -> aile/seviye/rol dağılımı + kaba token maliyeti; hiçbir istek atılmaz
+```
+
+Gerçek üretim (doğrulanmış `EVREN_*` değişkenleri gerekir):
+
+```bash
+python -m gokturk.data_generation --mode pro --target 10000 \
+  --out data/raw/pro.jsonl \
+  --candidates 2          # istem başına aday yanıt
+  # --no-critique         # öz-eleştiri adımını kapat (daha hızlı, daha düşük kalite)
+  # --families coding,reasoning,system_architecture
+  # --levels ileri
+  # --plan-in data/raw/plan.json   # planı yeniden kullan
+  # --seed 7 --resume
+```
+
+Her örnek için: (1) öğretmen bir Türkçe kullanıcı isteği taslaklar, (2) aynı
+istem için `--candidates` kadar yanıt üretilir ve doğrulayıcılardan en iyi geçen
+seçilir, (3) farklı roldeki bir öğretmen yanıtı ölçütlere göre denetler ve
+gerekirse **yalnızca doğrulayıcılardan geçen** onarımı uygular, (4) şema/kalite
+kapısı son sözü söyler. Geçmeyenler `*.rejects.jsonl`'e, eleştiri kayıtları
+`*.critique.jsonl`'e yazılır.
+
+Doğrulayıcılar **biçimi** denetler (JSON şeması, kod bloğu + dil, Türkçe oranı,
+uzunluk, akıl yürütme sızıntısı, araç çağrısı anahtarları). Anlamsal doğruluk
+otomatik ölçülmez — insan incelemesi zorunludur (`docs/architecture.md` §4–5).
+
+## Eğitim verisi üretimi (basic mod, API anahtarı gerekir)
 
 ```bash
 cp .env.example .env        # .env git tarafından izlenmez
@@ -88,14 +129,30 @@ python -m gokturk.data_generation --per-seed 1 \
 ## Eğitim
 
 ```bash
-# Ön denetim + plan
+# Ön denetim + plan (generic yol)
 python -m gokturk.train --config configs/training.yaml --plan-only
+
+# Ön denetim + plan (Unsloth 4-bit yolu — gpt-oss-20b'yi 16 GB karta sığdırır)
+python -m gokturk.train --backend unsloth \
+  --config configs/training_unsloth_t4.yaml --plan-only
 
 # Gerçek koşu (donanım uygunsa)
 python -m gokturk.train --config configs/training.yaml \
   --train-file data/processed/train.jsonl \
   --eval-file data/processed/valid.jsonl
+
+# Kaggle 2×T4 için önerilen yol: önce 60 adımlık ölçüm koşusu
+python -m gokturk.train --backend unsloth \
+  --config configs/training_unsloth_t4.yaml \
+  --train-file data/processed/train.jsonl \
+  --eval-file data/processed/valid.jsonl
 ```
+
+`--backend unsloth` Unsloth'un `FastLanguageModel`/`FastModel` API'sini kullanır,
+Unsloth yoksa sessizce generic yola **düşmez**: açık hata verir. Yayımlanmış
+referans rakamlar 4-bit QLoRA için ≈14 GB, 16-bit LoRA için ≈44 GB'dır; bu
+repoda gerçek bir Kaggle koşusu doğrulanmamıştır, bu yüzden 60 adımlık ölçüm
+koşusu varsayılandır.
 
 Ön denetim engelleyici bir sorun bulursa betik **eğitimi başlatmaz**
 (çıkış kodu 2) ve nedeni yazar. `--skip-preflight` yalnızca kendi sorumluluğunuzda
@@ -109,10 +166,11 @@ denetim raporu, metrikler).
 
 `notebooks/kaggle_training.ipynb` dosyasını Kaggle'a yükleyin,
 **Accelerator → GPU T4 x2**, **Internet → On** seçin, Secrets'a `EVREN_*`
-değişkenlerini ekleyin. Notebook sırasıyla ortamı denetler, paketleri kurar,
-veriyi doğrular, duman testini çalıştırır ve gerçek eğitimi dener. 2×T4 +
-gpt-oss-20b birleşiminde eğitim **başlamaz** ve nedenini alternatifleriyle
-yazar (bkz. `docs/architecture.md` §6).
+değişkenlerini ekleyin. Notebook sırasıyla ortamı denetler, Unsloth dahil
+paketleri kurar, veriyi doğrular, sentetik veri planını gösterir, duman testini
+çalıştırır, iki arka ucu ön denetimden geçirir ve uygun olanla **60 adımlık
+ölçüm koşusu** yapar. Hiçbiri uygun değilse dürüstçe durur ve nedenini yazar
+(bkz. `docs/architecture.md` §6–7).
 
 ## Veri inceleme akışı
 
@@ -146,7 +204,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 157 test
+python -m pytest tests -q        # 232 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -156,13 +214,14 @@ yolu ise rastgele başlatılmış küçük bir modelle (CPU) doğrulanır.
 ## Depo yapısı
 
 ```
-configs/     teachers.yaml, training.yaml
+configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
 docs/        architecture.md
 notebooks/   kaggle_training.ipynb
-src/gokturk/ schema, config, teachers, data_generation, data_quality,
-             env_check, train, evaluate
-tests/       157 otomatik test
+src/gokturk/ schema, config, teachers, task_specs, curriculum,
+             data_generation, data_quality, env_check, unsloth_backend,
+             train, evaluate
+tests/       232 otomatik test
 ```
 
 ## Lisans

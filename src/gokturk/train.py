@@ -12,6 +12,16 @@ What this module does
 5. Applies LoRA/QLoRA when configured, trains, and saves adapter + tokenizer +
    a run manifest.
 
+Backends
+--------
+``--backend transformers`` (default)
+    Generic transformers + peft path (LoRA / QLoRA via bitsandbytes).
+``--backend unsloth``
+    Unsloth's fused 4-bit QLoRA path, which is what makes gpt-oss-20b fit on a
+    16 GB GPU (≈14 GB VRAM by Unsloth's published figures). Unsloth is an
+    optional dependency; when it is missing the run stops with an actionable
+    message instead of silently falling back to a path that cannot fit.
+
 Modes
 -----
 ``--plan-only``   print the preflight report and the resolved plan; no model load.
@@ -482,7 +492,10 @@ def run_training(
     max_steps: int | None = None,
     output_dir: str | None = None,
     skip_preflight: bool = False,
+    backend: str = "transformers",
 ) -> int:
+    if backend not in ("transformers", "unsloth"):
+        raise ValueError(f"unknown backend {backend!r}")
     hardware = detect_hardware()
     dtype = resolve_torch_dtype(cfg.model.dtype, hardware)
 
@@ -490,22 +503,32 @@ def run_training(
     # replaces it with a tiny random one.
     model_name = cfg.model.name_or_path
     method = "lora" if smoke else cfg.optimization.method
-    report: PreflightReport = check_environment(
-        model_name="gokturk-smoke-tiny" if smoke else model_name,
-        method=method,
-        dtype=dtype,
-        load_in_4bit=cfg.model.load_in_4bit if not smoke else False,
-        params=(1e6 if smoke else None),
-        seq_len=cfg.data.max_seq_len,
-        batch_size=cfg.optimization.per_device_train_batch_size,
-        check_hub=False,
-        cpu_ok=smoke,
-    )
+    if backend == "unsloth" and not smoke:
+        from .unsloth_backend import preflight_unsloth
+
+        report: PreflightReport = preflight_unsloth(
+            model_name,
+            load_in_4bit=cfg.model.load_in_4bit,
+            hardware=hardware,
+            max_seq_length=cfg.data.max_seq_len,
+        )
+    else:
+        report = check_environment(
+            model_name="gokturk-smoke-tiny" if smoke else model_name,
+            method=method,
+            dtype=dtype,
+            load_in_4bit=cfg.model.load_in_4bit if not smoke else False,
+            params=(1e6 if smoke else None),
+            seq_len=cfg.data.max_seq_len,
+            batch_size=cfg.optimization.per_device_train_batch_size,
+            check_hub=False,
+            cpu_ok=smoke,
+        )
 
     if plan_only:
         print(report.render())
         print("\n=== Plan ===")
-        print(json.dumps(_plan_dict(cfg, dtype, smoke), ensure_ascii=False, indent=2))
+        print(json.dumps(_plan_dict(cfg, dtype, smoke, backend), ensure_ascii=False, indent=2))
         if not report.ok:
             print("\nUYARI: Bu plan mevcut donanımda çalıştırılamaz (yukarıdaki engelleyici bulgular).")
         return 0
@@ -538,10 +561,22 @@ def run_training(
         tokenizer = build_smoke_tokenizer(texts)
         model = build_smoke_model(len(tokenizer))
         method = "lora"
+    elif backend == "unsloth":
+        from . import unsloth_backend
+
+        model, tokenizer = unsloth_backend.load_model_and_tokenizer(
+            cfg, max_seq_length=cfg.data.max_seq_len
+        )
     else:
         model, tokenizer = load_model_and_tokenizer(cfg, dtype)
 
-    if method in ("lora", "qlora"):
+    if backend == "unsloth" and not smoke:
+        from . import unsloth_backend
+
+        model = unsloth_backend.apply_lora(
+            model, cfg, max_seq_length=cfg.data.max_seq_len
+        )
+    elif method in ("lora", "qlora"):
         model = apply_peft(model, cfg)
     else:
         if cfg.optimization.gradient_checkpointing:
@@ -592,11 +627,17 @@ def run_training(
     if eval_ds is not None:
         metrics.update({f"eval_{k}": v for k, v in trainer.evaluate().items()})
 
-    trainer.save_model(str(out / "adapter"))
-    tokenizer.save_pretrained(str(out / "adapter"))
+    if backend == "unsloth" and not smoke:
+        from . import unsloth_backend
+
+        unsloth_backend.save_adapter(model, tokenizer, str(out / "adapter"))
+    else:
+        trainer.save_model(str(out / "adapter"))
+        tokenizer.save_pretrained(str(out / "adapter"))
 
     manifest = {
         "kind": "smoke" if smoke else "training",
+        "backend": backend,
         "note": (
             "Duman testi: rastgele başlatılmış küçük model, kalite iddiası yok."
             if smoke
@@ -631,8 +672,11 @@ def _config_dict(cfg: TrainingConfig) -> dict[str, Any]:
     }
 
 
-def _plan_dict(cfg: TrainingConfig, dtype: str, smoke: bool) -> dict[str, Any]:
+def _plan_dict(
+    cfg: TrainingConfig, dtype: str, smoke: bool, backend: str = "transformers"
+) -> dict[str, Any]:
     return {
+        "backend": backend,
         "base_model": "gokturk-smoke-tiny (rastgele)" if smoke else cfg.model.name_or_path,
         "method": "lora(smoke)" if smoke else cfg.optimization.method,
         "dtype": dtype,
@@ -653,6 +697,12 @@ def _plan_dict(cfg: TrainingConfig, dtype: str, smoke: bool) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="GökTürk-Ultra eğitim giriş noktası")
     parser.add_argument("--config", default="configs/training.yaml")
+    parser.add_argument(
+        "--backend",
+        choices=["transformers", "unsloth"],
+        default="transformers",
+        help="Eğitim arka ucu: generic transformers/peft veya Unsloth 4-bit QLoRA",
+    )
     parser.add_argument("--plan-only", action="store_true", help="Yalnızca denetim ve plan")
     parser.add_argument(
         "--smoke",
@@ -688,6 +738,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_steps=args.max_steps,
         output_dir=args.output_dir,
         skip_preflight=args.skip_preflight,
+        backend=args.backend,
     )
 
 

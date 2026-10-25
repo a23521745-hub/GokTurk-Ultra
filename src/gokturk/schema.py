@@ -51,10 +51,13 @@ TASK_TYPES: Final[tuple[str, ...]] = (
     "instruction_following",
     "summarization",
     "coding",
+    "coding_debug",
     "tool_calling",
     "reasoning",
     "rewrite",
     "translation",
+    "turkish_advanced",
+    "system_architecture",
 )
 
 

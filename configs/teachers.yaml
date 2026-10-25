@@ -31,19 +31,21 @@ provider:
   extra_headers: {}
 
 teachers:
-  # Eğitmen/öğretmen 1 — akıl yürütme ve talimat takibi ağırlıklı
+  # Öğretmen 1 — akıl yürütme, mimari ve ileri Türkçe görevleri
+  # NOT: `role` yalnızca YÖNLENDİRME ipucudur; model kimliği ve yetenekleri
+  # sağlayıcının belgesinden doğrulanmalıdır. Roller: general | reasoning | code
   - name: mimo-v26-pro
     model: "env:EVREN_MODEL_MIMO"
-    role: teacher
+    role: "reasoning,general"
     weight: 1.0
     temperature: 0.6
     top_p: 0.95
     max_tokens: 2048
 
-  # Eğitmen/öğretmen 2 — kodlama ve araç çağırma ağırlıklı
+  # Öğretmen 2 — kodlama, hata ayıklama ve araç çağırma görevleri
   - name: kimi-k3
     model: "env:EVREN_MODEL_KIMI"
-    role: teacher
+    role: "code,general"
     weight: 1.0
     temperature: 0.7
     top_p: 0.95

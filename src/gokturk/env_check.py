@@ -56,6 +56,21 @@ KNOWN_MODELS: dict[str, dict[str, Any]] = {
 #: Unsloth-specific kernel path, not what transformers+bitsandbytes does here.
 GPT_OSS_REFERENCE_VRAM_GB = {"lora_bf16": 44, "qlora_unsloth_4bit": 14}
 
+def resolve_known_model(model_name: str) -> dict[str, Any] | None:
+    """Match a checkpoint id against :data:`KNOWN_MODELS` (substring, case-free).
+
+    Community mirrors such as ``unsloth/gpt-oss-20b`` are the same architecture
+    and the same released weights, so planning numbers must not silently vanish
+    just because the repository prefix differs.
+    """
+    key = model_name.strip().casefold()
+    for known_name, facts in KNOWN_MODELS.items():
+        short = known_name.split("/")[-1].casefold()
+        if known_name.casefold() in key or short in key:
+            return facts
+    return None
+
+
 #: GPU compute capabilities that have bfloat16 support.
 BF16_MIN_COMPUTE_CAPABILITY = 8.0  # Ampere (A100/3090) and newer
 MXFP4_MIN_COMPUTE_CAPABILITY = 9.0  # Hopper (H100) and newer
@@ -344,6 +359,7 @@ class PreflightReport:
     model_name: str = ""
     method: str = ""
     dtype: str = ""
+    backend: str = "transformers"
 
     @property
     def blocking(self) -> list[Finding]:
@@ -361,6 +377,7 @@ class PreflightReport:
         return {
             "model": self.model_name,
             "method": self.method,
+            "backend": self.backend,
             "dtype": self.dtype,
             "ok": self.ok,
             "hardware": self.hardware.to_dict(),
@@ -451,11 +468,17 @@ def check_environment(
     check_hub: bool = False,
     trust_remote_code: bool = False,
     cpu_ok: bool = False,
+    backend: str = "transformers",
+    hardware: HardwareInfo | None = None,
 ) -> PreflightReport:
-    """Collect hardware/package/model information and derive findings."""
-    hardware = detect_hardware(probe_path)
+    """Collect hardware/package/model information and derive findings.
+
+    ``hardware`` can be injected (tests, or callers that already probed the
+    machine) instead of probing again.
+    """
+    hardware = hardware or detect_hardware(probe_path)
     packages = detect_packages()
-    known = KNOWN_MODELS.get(model_name)
+    known = resolve_known_model(model_name)
     if params is None:
         params = known["params"] if known else None
 
@@ -467,6 +490,9 @@ def check_environment(
         method=method,
         dtype=dtype,
     )
+    if backend not in ("transformers", "unsloth"):
+        raise ValueError(f"unknown backend {backend!r}; use 'transformers' or 'unsloth'")
+    report.backend = backend
     add = report.findings.append
 
     installed = {p.name: p for p in packages}
@@ -476,7 +502,7 @@ def check_environment(
         add(Finding("transformers-missing", SEVERITY_BLOCKING, "transformers kurulu değil."))
     if method in ("lora", "qlora") and not installed.get("peft", PackageInfo("", False, None, "")).installed:
         add(Finding("peft-missing", SEVERITY_BLOCKING, "peft kurulu değil; LoRA/QLoRA uygulanamaz."))
-    if method == "qlora":
+    if method == "qlora" and backend == "transformers":
         if not installed.get("bitsandbytes", PackageInfo("", False, None, "")).installed:
             add(
                 Finding(
@@ -494,6 +520,14 @@ def check_environment(
                     "QLoRA 4-bit eğitim CUDA olmadan çalışmaz.",
                 )
             )
+    if backend == "unsloth":
+        add(
+            Finding(
+                "unsloth-backend",
+                SEVERITY_INFO,
+                "Eğitim arka ucu: Unsloth 4-bit QLoRA (bitsandbytes yolu kullanılmıyor).",
+            )
+        )
 
     if not hardware.cuda_available:
         if cpu_ok:
@@ -589,7 +623,7 @@ def check_environment(
                     "bf16 ağırlıklar tek başına ≈42 GB tutar.",
                 )
             )
-        if method == "lora":
+        if method == "lora" and backend == "transformers":
             add(
                 Finding(
                     "gptoss-lora-bf16-vram",
@@ -601,7 +635,7 @@ def check_environment(
                     "Bf16 yükseltme olmadan LoRA uygulanamaz.",
                 )
             )
-        if method == "qlora":
+        if method == "qlora" and backend == "transformers":
             single = hardware.total_vram_gb
             if single < 24:
                 add(
@@ -611,9 +645,9 @@ def check_environment(
                         f"Bu repodaki transformers+bitsandbytes QLoRA yolu gpt-oss-20b'yi "
                         f"{single} GB VRAM'e sığdıramaz; yayımlanmış ~14 GB rakamı "
                         "Unsloth'un özel 4-bit çekirdeklerine aittir.",
-                        "Seçenekler: (a) Unsloth tabanlı ayrı bir eğitim yolu, "
-                        "(b) daha büyük GPU (>=48 GB), (c) 7-8B sınıfı bir taban modelle "
-                        "altyapıyı doğrulayıp ölçek büyütme.",
+                        "Seçenekler: (a) `--backend unsloth` ile Unsloth 4-bit yolu "
+                        "(bu repoda desteklenir), (b) daha büyük GPU (>=48 GB) ve bf16 LoRA, "
+                        "(c) 7-8B sınıfı bir taban modelle altyapıyı doğrulayıp ölçek büyütme.",
                     )
                 )
             if not (hardware.bf16_supported):

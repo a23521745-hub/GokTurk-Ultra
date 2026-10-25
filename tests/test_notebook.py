@@ -62,7 +62,10 @@ def test_notebook_covers_required_steps(notebook):
         "run_training",           # eğitim denemesi
         "smoke",                  # duman testi
         "run_manifest.json",      # çıktı kaydı
-        "ENGELLEYİCİ",            # hata durumunda tanılama
+        "unsloth",                # 4-bit QLoRA yolu
+        "preflight_unsloth",      # Unsloth ön denetimi
+        "plan_only",              # sentetik veri planı
+        "blocking",               # hata durumunda tanılama
     ]
     for token in required:
         assert token in text, f"notebook is missing step: {token}"
