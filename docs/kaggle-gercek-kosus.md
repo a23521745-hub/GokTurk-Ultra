@@ -233,6 +233,20 @@ açılır; herkese açık istiyorsanız `--public` ekleyin.
 **Yapılmayacak:** `gokturk.publish --merge`. Bu repoda birleştirme varsayılan
 değil; adaptör + taban ayrı taşınır (bkz. `docs/servis-ve-dinamik-lora.md`).
 
+### `.gguf` istiyorsanız
+
+Birleştirme gerekmez: `convert_lora_to_gguf.py` adaptörü tek başına çevirir
+(≈2 GB RAM, 1–3 dk). Taban için hazır `unsloth/Qwen3.5-4B-GGUF` var.
+
+```bash
+python -m gokturk.lora_gguf --adapter /kaggle/working/run-4b/adapter \
+  --base-model Qwen/Qwen3.5-4B --out-dir /kaggle/working/gguf
+```
+
+`publish --gguf-plan` (birleştirme) Kaggle'da **HAYIR** der, ve bu doğrudur;
+`lora_gguf` ise **EVET** der, o da doğrudur — farklı işler.
+Ayrıntı: [`docs/gguf-donusumu.md`](gguf-donusumu.md).
+
 ---
 
 ## 6. Servis ve doğrulama

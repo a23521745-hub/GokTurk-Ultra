@@ -35,6 +35,7 @@ src/gokturk/
   unsloth_backend.py   Unsloth 4-bit QLoRA yolu (≈14 GB VRAM) + API sürüm uyumu
   train.py             Eğitim giriş noktası (transformers | unsloth) + duman testi
   evaluate.py          Biçim kontrolü, kural tabanlı skorlama, opsiyonel yargıç
+  lora_gguf.py         Adaptör-only GGUF planı/çalıştırması (llama.cpp LoRA, birleştirme yok)
 configs/
   teachers.yaml        Sağlayıcı + öğretmen modeller (env referanslı, rol yönlendirmeli)
   training.yaml        Eğitim ayarları — generic transformers yolu
@@ -50,7 +51,7 @@ data/
   samples/             6 elle yazılmış örnek (eğitim seti DEĞİL)
 notebooks/
   kaggle_training.ipynb  Kaggle deneyi (ön denetim → duman testi → dürüst duruş)
-tests/                 367 otomatik test
+tests/                 401 otomatik test
 ```
 
 Veri akışı:

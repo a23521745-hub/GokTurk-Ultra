@@ -21,6 +21,7 @@ model/ajan prototipi için **veri, eğitim ve değerlendirme altyapısı**.
 | Eğitim | `src/gokturk/train.py` | `--backend transformers` (LoRA/QLoRA/full) veya `--backend unsloth` (4-bit QLoRA); prompt maskeleme; ön denetim geçmezse **başlamaz**; CPU duman testi |
 | Değerlendirme | `src/gokturk/evaluate.py` | Biçim kontrolü, sabit Türkçe test setinde kural tabanlı skorlama, opsiyonel (doğrulanmamış) yargıç |
 | Kaggle deneyi | `notebooks/kaggle_training.ipynb` | Ortam → paketler → veri doğrulama → duman testi → dürüst tanılama → çıktı kaydı |
+| GGUF (adaptör-only) | `src/gokturk/lora_gguf.py` | `convert_lora_to_gguf.py` planı/çalıştırması; birleştirme yok, ≈2 GB RAM; llama.cpp mimari desteğini doğrular |
 | GitHub Actions mini eğitim | `.github/workflows/mini-adapter.yml` + `configs/training_mini_cpu.yaml` | CPU runner'da 0.6B LoRA (30–100 adım) → manifest → log denetimi → adaptör-only GGUF; boru hattı kanıtı, kalite iddiası değil |
 
 ## Kurulum
@@ -270,15 +271,21 @@ python -m gokturk.publish --adapter outputs/gokturk-run/adapter \
 python -m gokturk.publish --adapter outputs/gokturk-run/adapter \
   --repo-id kullanici/gokturk-ultra-lora --manifest outputs/gokturk-run/run_manifest.json --push
 
-# 3) GGUF mümkün mü? (makinenin gerçek RAM/disk sayılarıyla)
+# 3) GGUF: iki yol, iki farklı cevap
 python -m gokturk.publish --gguf-plan --adapter outputs/gokturk-run/adapter --quant mxfp4
+python -m gokturk.lora_gguf --adapter outputs/gokturk-run/adapter \
+  --base-model Qwen/Qwen3.5-4B          # adaptör-only: birleştirme YOK, ≈2 GB RAM
 ```
 
 - Yükleme **adaptörü** gönderir (~yüz MB), 42 GB'lık birleşik modeli değil.
   Model kartı manifestten üretilir ve ölçülmemiş hiçbir başarı iddiası içermez.
-- **GGUF otomatik üretilmez.** LoRA birleştirmesi ≈42 GB bellek ister; Kaggle
-  ücretsiz katmanı (29 GB RAM, 20 GB disk) bunu kaldırmaz. Plan komutu bunu
-  sayılarla söyler; yeterli makinede 5 adımlık komut listesini basar.
+- **GGUF otomatik üretilmez**, ama iki ayrı yol var ve karıştırılmamalı:
+  * `--gguf-plan` → **birleştirme**: ≈67 GB RAM / ≈100 GB disk ister, Kaggle'da
+    imkânsız (tek dosya dağıtımı gerekiyorsa).
+  * `--adapter-only` (`python -m gokturk.lora_gguf`) → **birleştirme yok**:
+    ≈2 GB RAM, ≈4 GB disk, 5–13 dakika. Kaggle'da **çalışır**; llama.cpp
+    adaptörü yükleme anında tabana uygular.
+  * Ayrıntı ve doğrulanmış kaynak atıfları: [`docs/gguf-donusumu.md`](docs/gguf-donusumu.md).
 - gpt-oss'un doğal biçimi **MXFP4**'tür (uzmanlar zaten 4-bit). Q4_K_M
   desteklenir ama bu modelde ikinci bir yuvarlama ekler; varsayılan MXFP4.
 - Ayrıntı: [`docs/yayinlama-ve-gguf.md`](docs/yayinlama-ve-gguf.md).
@@ -321,7 +328,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 367 test
+python -m pytest tests -q        # 401 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -335,12 +342,13 @@ configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
 docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md,
              taban-model-secimi.md, servis-ve-dinamik-lora.md,
-             github-actions-mini-egitim.md, kaggle-gercek-kosus.md
+             github-actions-mini-egitim.md, kaggle-gercek-kosus.md,
+             gguf-donusumu.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
              train, evaluate, logcheck, publish, serve
-tests/       367 otomatik test
+tests/       401 otomatik test
 ```
 
 ## Lisans

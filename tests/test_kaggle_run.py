@@ -351,6 +351,47 @@ def test_run_doc_documents_the_fused_loss_failure():
 
 
 # ---------------------------------------------------------------------------
+# Kaggle çıktısından gelen düzeltmeler (2026-10-25, başarılı koşu sonrası)
+# ---------------------------------------------------------------------------
+def test_notebook_collects_hf_token_from_secrets():
+    """Kullanıcı HF_TOKEN'ı girse de notebook onu hiç okumuyordu."""
+    import json
+
+    nb = json.loads((ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8"))
+    text = "".join("".join(cell["source"]) for cell in nb["cells"])
+    assert 'SECRET_KEYS = ["EVREN_API_KEY", "HF_TOKEN"]' in text
+    assert "HF_TOKEN:" in text, "token durumu ekrana yazılmalı"
+
+
+def test_notebook_refuses_publish_without_repo_id():
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "repo_ok" in text
+    assert "HF_REPO_ID boş" in text
+
+
+def test_notebook_warns_about_tiny_training_set():
+    """4 örnek × 60 epoch sessizce 'başarı' gibi görünüyordu."""
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "UYARI: eğitim seti yalnızca" in text
+    assert "_train_rows < 100" in text
+    assert "EZBERLER" in text
+
+
+def test_notebook_uses_adapter_only_gguf_plan():
+    """Eski hücre birleştirme planı basıyordu; doğru yol adaptör-only."""
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "plan_adapter_gguf" in text
+    assert "render_plan" in text
+    assert "birleştirme YOK" in text
+
+
+def test_notebook_renders_logcheck():
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "analyze_manifest" in text
+    assert "render_logcheck" in text
+
+
+# ---------------------------------------------------------------------------
 # koşu belgesi
 # ---------------------------------------------------------------------------
 def test_run_checklist_doc_covers_the_required_steps():
