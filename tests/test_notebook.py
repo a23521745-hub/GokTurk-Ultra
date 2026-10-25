@@ -66,9 +66,20 @@ def test_notebook_covers_required_steps(notebook):
         "preflight_unsloth",      # Unsloth ön denetimi
         "plan_only",              # sentetik veri planı
         "blocking",               # hata durumunda tanılama
+        "list_models",            # sağlayıcının kendi model listesiyle doğrulama
     ]
     for token in required:
         assert token in text, f"notebook is missing step: {token}"
+
+
+def test_notebook_uses_verified_teacher_ids():
+    """Teacher ids live in config; the notebook must not carry a dead env name."""
+    raw = NOTEBOOK.read_text(encoding="utf-8")
+    assert "EVREN_MODEL_KIMI" not in raw
+    text = "".join("".join(c["source"]) for c in json.loads(raw)["cells"])
+    # The ids are verified in configs/teachers.yaml, so only the key is needed.
+    assert "yalnızca `EVREN_API_KEY`" in text
+    assert "mimo-v2.6-pro" in text and "glm-5.3" in text
 
 
 def test_notebook_does_not_claim_a_trained_model(notebook):
