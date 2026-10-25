@@ -209,6 +209,30 @@ python -m gokturk.data_quality --data data/processed/train.jsonl \
 olarak işaretlenir. Hata oranı eşiği aşarsa ilgili istem şablonu düzeltilir ve o
 `template_version` ile üretilen veri atılır. Süreç: `docs/architecture.md` §4.
 
+## Yayınlama: Hugging Face ve GGUF
+
+```bash
+# 1) Plan (ağa çıkmaz): dosyalar, boyut, token var mı
+python -m gokturk.publish --adapter outputs/gokturk-run/adapter \
+  --repo-id kullanici/gokturk-ultra-lora
+
+# 2) Gerçek yükleme (özel depo; token yalnızca HF_TOKEN ortam değişkeninden)
+python -m gokturk.publish --adapter outputs/gokturk-run/adapter \
+  --repo-id kullanici/gokturk-ultra-lora --manifest outputs/gokturk-run/run_manifest.json --push
+
+# 3) GGUF mümkün mü? (makinenin gerçek RAM/disk sayılarıyla)
+python -m gokturk.publish --gguf-plan --adapter outputs/gokturk-run/adapter --quant mxfp4
+```
+
+- Yükleme **adaptörü** gönderir (~yüz MB), 42 GB'lık birleşik modeli değil.
+  Model kartı manifestten üretilir ve ölçülmemiş hiçbir başarı iddiası içermez.
+- **GGUF otomatik üretilmez.** LoRA birleştirmesi ≈42 GB bellek ister; Kaggle
+  ücretsiz katmanı (29 GB RAM, 20 GB disk) bunu kaldırmaz. Plan komutu bunu
+  sayılarla söyler; yeterli makinede 5 adımlık komut listesini basar.
+- gpt-oss'un doğal biçimi **MXFP4**'tür (uzmanlar zaten 4-bit). Q4_K_M
+  desteklenir ama bu modelde ikinci bir yuvarlama ekler; varsayılan MXFP4.
+- Ayrıntı: [`docs/yayinlama-ve-gguf.md`](docs/yayinlama-ve-gguf.md).
+
 ## Değerlendirme
 
 ```bash
@@ -227,7 +251,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 252 test
+python -m pytest tests -q        # 297 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -239,12 +263,12 @@ yolu ise rastgele başlatılmış küçük bir modelle (CPU) doğrulanır.
 ```
 configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
-docs/        architecture.md, kaggle-rehberi.md
+docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
-             train, evaluate, logcheck
-tests/       252 otomatik test
+             train, evaluate, logcheck, publish
+tests/       297 otomatik test
 ```
 
 ## Lisans

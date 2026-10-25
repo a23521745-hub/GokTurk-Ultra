@@ -67,6 +67,8 @@ def test_notebook_covers_required_steps(notebook):
         "plan_only",              # sentetik veri planı
         "blocking",               # hata durumunda tanılama
         "list_models",            # sağlayıcının kendi model listesiyle doğrulama
+        "push_adapter",           # isteğe bağlı HF yüklemesi (kapalı varsayılan)
+        "plan_gguf",              # GGUF fizibilitesi (dönüşüm değil)
     ]
     for token in required:
         assert token in text, f"notebook is missing step: {token}"
@@ -80,6 +82,13 @@ def test_notebook_uses_verified_teacher_ids():
     # The ids are verified in configs/teachers.yaml, so only the key is needed.
     assert "yalnızca `EVREN_API_KEY`" in text
     assert "mimo-v2.6-pro" in text and "glm-5.3" in text
+
+
+def test_notebook_publishing_is_off_by_default(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+    assert "RUN_PUBLISH = False" in text, "publishing must be opt-in"
+    assert "HF_REPO_ID" in text
+    assert "HF_TOKEN" in text
 
 
 def test_notebook_does_not_claim_a_trained_model(notebook):

@@ -24,6 +24,8 @@ src/gokturk/
   schema.py            JSONL kayıt şeması (sürümlü)
   config.py            Katı YAML yükleme + doğrulama; sırlar yalnızca env'den
   teachers.py          OpenAI-uyumlu öğretmen adaptörü (retry/timeout/limit, rol yönlendirme)
+  logcheck.py          eğitim logu/manifest okuma (mekanik teşhis)
+  publish.py           HF adaptör yükleme + GGUF fizibilite planı
   task_specs.py        10 görev ailesi: istemler, konu bankaları, katı doğrulayıcılar
   curriculum.py        Deterministik plan (N örnek → aile/konu/seviye/rol) + maliyet
   data_generation.py   Basic (taslak+yanıt) ve PRO (N aday + öz-eleştiri/düzeltme) üretim

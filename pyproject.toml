@@ -34,6 +34,8 @@ train = [
 qlora = ["bitsandbytes>=0.43"]
 # 4-bit QLoRA for gpt-oss on consumer GPUs (≈14 GB VRAM). Heavy, CUDA-only.
 unsloth = ["unsloth"]
+# Hugging Face'e adaptör yüklemek için (opsiyonel; çekirdek çalışma için gerekmez).
+hub = ["huggingface-hub>=0.24"]
 dev = ["pytest>=7.4", "ruff>=0.5"]
 
 [project.scripts]
