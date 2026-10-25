@@ -203,15 +203,14 @@ def test_dataparallel_replica_error_is_recognised():
     assert "4-bit" in finding["message"]
 
 
-def test_notebook_clones_the_pr_branch_not_main():
-    """Kaggle'da main klonlanırsa yeni profiller yok: dal açıkça sabitlenmeli."""
+def test_notebook_clones_an_explicit_branch():
+    """Dal açıkça yazılmalı ve klonlama --branch kullanmalı (varsayılana güvenmeyin)."""
     import json
 
     nb = json.loads((ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8"))
     text = "".join("".join(cell["source"]) for cell in nb["cells"])
     assert "REPO_BRANCH" in text
     assert '"--branch", REPO_BRANCH' in text
-    assert "arena/29737df4-gokturk-ultra" in text
     # dal bulunamazsa main'e düşerken uyarmalı
     assert "main çekiliyor" in text
 
@@ -389,6 +388,81 @@ def test_notebook_renders_logcheck():
     text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
     assert "analyze_manifest" in text
     assert "render_logcheck" in text
+
+
+# ---------------------------------------------------------------------------
+# Bayat kod koruması (2026-10-25: lora_gguf import edilemedi, koşu çöpe gitti)
+# ---------------------------------------------------------------------------
+def test_notebook_defaults_to_main_and_refreshes_hard():
+    import json
+
+    nb = json.loads((ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8"))
+    text = "".join("".join(c["source"]) for c in nb["cells"])
+    assert 'REPO_BRANCH = "main"' in text
+    # `git pull --ff-only` sessizce eski kodda kalabiliyordu.
+    assert '"reset", "-q", "--hard", "FETCH_HEAD"' in text
+    assert "en son commit'e getiriliyor" in text
+
+
+def test_notebook_checks_required_capabilities():
+    import json
+
+    nb = json.loads((ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8"))
+    text = "".join("".join(c["source"]) for c in nb["cells"])
+    assert "_CAPABILITIES" in text
+    assert "src/gokturk/lora_gguf.py" in text
+    assert "bu kopyada eksik yetenekler" in text
+    # git pull sonrası eski modüller bellekte kalmasın
+    assert "del sys.modules[_name]" in text
+
+
+def test_optional_publish_cell_survives_missing_module():
+    """İsteğe bağlı hücre, import hatası yüzünden koşuyu bitirmemeli."""
+    import json
+
+    nb = json.loads((ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8"))
+    cell = next(
+        c for c in nb["cells"] if c["cell_type"] == "code" and "RUN_PUBLISH" in "".join(c["source"])
+    )
+    source = "".join(cell["source"])
+    assert "except ImportError" in source
+    assert "Adaptör-only GGUF planı bu kod sürümünde yok" in source
+    assert "başarısız olsa da eğitim çıktıları korunur" in source
+    # İçe aktarmalar try bloklarının içinde olmalı: satır başında çıplak import yok.
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("from gokturk") or stripped.startswith("import gokturk"):
+            assert line.startswith("    "), f"korumasız import: {line!r}"
+
+
+def test_epoch_explosion_is_flagged_in_manifest():
+    from gokturk.logcheck import analyze_manifest
+
+    manifest = {
+        "kind": "training",
+        "backend": "transformers",
+        "resolved_dtype": "fp16",
+        "data": {"train_examples": 4, "eval_examples": 1},
+        "metrics": {"train_loss": 0.0777, "eval_eval_loss": 2.261, "epoch": 60.0},
+    }
+    report = analyze_manifest(manifest)
+    codes = {f["code"] for f in report["findings"]}
+    assert "epoch-explosion" in codes
+    finding = next(f for f in report["findings"] if f["code"] == "epoch-explosion")
+    assert "ezberleme" in finding["message"]
+    assert "600–1200" in finding["action"]
+
+
+def test_normal_epoch_count_is_not_flagged():
+    from gokturk.logcheck import analyze_manifest
+
+    manifest = {
+        "kind": "training",
+        "backend": "transformers",
+        "data": {"train_examples": 9000, "eval_examples": 500},
+        "metrics": {"train_loss": 1.2, "eval_eval_loss": 1.25, "epoch": 1.4},
+    }
+    assert "epoch-explosion" not in {f["code"] for f in analyze_manifest(manifest)["findings"]}
 
 
 # ---------------------------------------------------------------------------

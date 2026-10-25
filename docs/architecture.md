@@ -51,7 +51,7 @@ data/
   samples/             6 elle yazılmış örnek (eğitim seti DEĞİL)
 notebooks/
   kaggle_training.ipynb  Kaggle deneyi (ön denetim → duman testi → dürüst duruş)
-tests/                 401 otomatik test
+tests/                 406 otomatik test
 ```
 
 Veri akışı:
