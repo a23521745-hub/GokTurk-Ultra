@@ -69,6 +69,7 @@ BASE_PARAMS_B = {
     "Qwen/Qwen3.5-4B": 4.0,
     "Qwen/Qwen3.5-27B": 27.0,
     "Qwen/Qwen3-14B": 14.8,
+    "Qwen/Qwen3-0.6B": 0.6,
 }
 
 #: Effective memory bandwidth assumed per vCPU when running a quantised model

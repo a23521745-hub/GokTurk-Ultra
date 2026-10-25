@@ -492,6 +492,7 @@ def run_training(
     max_steps: int | None = None,
     output_dir: str | None = None,
     skip_preflight: bool = False,
+    cpu_ok: bool = False,
     backend: str = "transformers",
 ) -> int:
     if backend not in ("transformers", "unsloth"):
@@ -522,7 +523,8 @@ def run_training(
             seq_len=cfg.data.max_seq_len,
             batch_size=cfg.optimization.per_device_train_batch_size,
             check_hub=False,
-            cpu_ok=smoke,
+            cpu_ok=smoke or cpu_ok,
+            cpu_mini=(cpu_ok and not smoke),
         )
 
     if plan_only:
@@ -535,7 +537,10 @@ def run_training(
 
     if not report.ok:
         print(report.render(), file=sys.stderr)
-        if not skip_preflight:
+        # İki ayrı kapı: bayrak (--skip-preflight) ve yapılandırma
+        # (require_preflight_ok: false). İkisi de açıkça söylenir; sessiz geçiş yok.
+        override = skip_preflight or not cfg.require_preflight_ok
+        if not override:
             print(
                 "\nEğitim başlatılmadı: ön denetim engelleyici sorun bildirdi.\n"
                 "Bu donanımda desteklenmeyen bir yöntemi çalıştırıyormuş gibi göstermiyoruz.\n"
@@ -544,7 +549,12 @@ def run_training(
                 file=sys.stderr,
             )
             return 2
-        print("UYARI: --skip-preflight verildi; engelleyici bulgulara rağmen deneniyor.", file=sys.stderr)
+        reason = "--skip-preflight verildi" if skip_preflight else "require_preflight_ok: false"
+        print(
+            f"UYARI: {reason}; engelleyici bulgulara rağmen deneniyor. "
+            "Manifest bu bulguları ve koşunun geçersiz kılındığını kaydeder.",
+            file=sys.stderr,
+        )
 
     out = Path(output_dir or cfg.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -709,10 +719,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Küçük rastgele modelle boru hattı testi (model indirmez, kalite ölçmez)",
     )
+    parser.add_argument("--model", default=None, help="model.name_or_path üzerine yaz")
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--train-file", default=None, help="data.train_file üzerine yaz")
     parser.add_argument("--eval-file", default=None, help="data.eval_file üzerine yaz")
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument(
+        "--cpu-ok",
+        action="store_true",
+        help="CPU'da bilinçli mini koşu (≤1B model, kısa LoRA); ön denetim engellemez",
+    )
     parser.add_argument("--skip-preflight", action="store_true", help="Engelleyici bulguları yok say")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
@@ -726,6 +742,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:
         print(f"Yapılandırma hatası: {exc}", file=sys.stderr)
         return 4
+    if args.model:
+        cfg.model.name_or_path = args.model
     if args.train_file:
         cfg.data.train_file = args.train_file
     if args.eval_file:
@@ -738,6 +756,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_steps=args.max_steps,
         output_dir=args.output_dir,
         skip_preflight=args.skip_preflight,
+        cpu_ok=args.cpu_ok,
         backend=args.backend,
     )
 

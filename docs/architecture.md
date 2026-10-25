@@ -39,13 +39,17 @@ configs/
   teachers.yaml        Sağlayıcı + öğretmen modeller (env referanslı, rol yönlendirmeli)
   training.yaml        Eğitim ayarları — generic transformers yolu
   training_unsloth_t4.yaml  Unsloth 4-bit QLoRA (Kaggle 2×T4) ayarları
+  training_mini_cpu.yaml    Mini koşu: 0.6B, fp32, 30 adım (CPU / GitHub runner)
+.github/workflows/
+  ci.yml               ruff + pytest + veri hattı planı (anahtar gerektirmez)
+  mini-adapter.yml     Elle tetiklenen mini LoRA → manifest → logcheck → GGUF LoRA
 data/
   seeds/               Türkçe tohum görevler
   eval/                Sabit değerlendirme seti (16 öğe, 4 kategori)
   samples/             6 elle yazılmış örnek (eğitim seti DEĞİL)
 notebooks/
   kaggle_training.ipynb  Kaggle deneyi (ön denetim → duman testi → dürüst duruş)
-tests/                 125 otomatik test
+tests/                 341 otomatik test
 ```
 
 Veri akışı:

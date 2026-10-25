@@ -21,6 +21,7 @@ model/ajan prototipi için **veri, eğitim ve değerlendirme altyapısı**.
 | Eğitim | `src/gokturk/train.py` | `--backend transformers` (LoRA/QLoRA/full) veya `--backend unsloth` (4-bit QLoRA); prompt maskeleme; ön denetim geçmezse **başlamaz**; CPU duman testi |
 | Değerlendirme | `src/gokturk/evaluate.py` | Biçim kontrolü, sabit Türkçe test setinde kural tabanlı skorlama, opsiyonel (doğrulanmamış) yargıç |
 | Kaggle deneyi | `notebooks/kaggle_training.ipynb` | Ortam → paketler → veri doğrulama → duman testi → dürüst tanılama → çıktı kaydı |
+| GitHub Actions mini eğitim | `.github/workflows/mini-adapter.yml` + `configs/training_mini_cpu.yaml` | CPU runner'da 0.6B LoRA (30–100 adım) → manifest → log denetimi → adaptör-only GGUF; boru hattı kanıtı, kalite iddiası değil |
 
 ## Kurulum
 
@@ -219,6 +220,28 @@ Dört karar verir: `SAĞLIKLI`, `DİKKAT`, `BOZUK` (NaN/ıraksama), `BAŞARISIZ`
 mekaniğini denetler** — model kalitesi hakkında hiçbir şey söylemez; kalite
 için `gokturk.evaluate` + insan incelemesi gerekir.
 
+### GitHub Actions ile mini adaptör (CPU, GPU yok)
+
+Boru hattını uçtan uca kanıtlayan küçük koşu; **GökTürk-Ultra'yı eğitmez**.
+
+```bash
+# Elle tetiklenir: Actions → "Mini adaptör (CPU)" → Run workflow
+# Secret'lar (yalnızca gerektiğinde):
+#   HF_TOKEN      → push_to_hub = true
+#   EVREN_API_KEY → check_evren  = true  (yalnızca --health-check, veri üretmez)
+
+# Aynı komutlar yerelde:
+python -m gokturk.train --config configs/training_mini_cpu.yaml \
+  --model Qwen/Qwen3-0.6B --cpu-ok --plan-only
+```
+
+Public depoda `ubuntu-latest` = 4 vCPU / 16 GB / **14 GB disk**, **GPU yok**;
+GitHub Pro bu tabloyu değiştirmez. Sonuç: ≤1B modelde 30–100 adım LoRA evet,
+9B adaptör hayır. `--cpu-ok`, "GPU yok" bulgusunu engelleyici olmaktan çıkarıp
+bilgiye indirir; `--skip-preflight` gibi engelleri sessizce yutmaz.
+
+[`docs/github-actions-mini-egitim.md`](docs/github-actions-mini-egitim.md)
+
 ## Veri inceleme akışı
 
 Öğretmen çıktısı otomatik olarak doğru sayılmaz:
@@ -295,7 +318,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 319 test
+python -m pytest tests -q        # 341 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -308,12 +331,13 @@ yolu ise rastgele başlatılmış küçük bir modelle (CPU) doğrulanır.
 configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
 docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md,
-             taban-model-secimi.md, servis-ve-dinamik-lora.md
+             taban-model-secimi.md, servis-ve-dinamik-lora.md,
+             github-actions-mini-egitim.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
              train, evaluate, logcheck, publish, serve
-tests/       319 otomatik test
+tests/       341 otomatik test
 ```
 
 ## Lisans

@@ -81,6 +81,15 @@ KNOWN_MODELS: dict[str, dict[str, Any]] = {
         "license": "Apache-2.0",
         "source": "huggingface.co/api/models/Qwen/Qwen3.5-27B (2026-10-25)",
     },
+    "Qwen/Qwen3-0.6B": {
+        "params": 0.6e9,
+        "active_params": 0.6e9,
+        "architecture": "Qwen3ForCausalLM (metin)",
+        "native_format": "bf16",
+        "gated": False,
+        "license": "Apache-2.0",
+        "source": "huggingface.co/api/models/Qwen/Qwen3-0.6B (2026-10-25)",
+    },
     "Qwen/Qwen3-14B": {
         "params": 14.8e9,
         "active_params": 14.8e9,
@@ -509,6 +518,7 @@ def check_environment(
     check_hub: bool = False,
     trust_remote_code: bool = False,
     cpu_ok: bool = False,
+    cpu_mini: bool = False,
     backend: str = "transformers",
     hardware: HardwareInfo | None = None,
 ) -> PreflightReport:
@@ -571,7 +581,28 @@ def check_environment(
         )
 
     if not hardware.cuda_available:
-        if cpu_ok:
+        if cpu_mini:
+            add(
+                Finding(
+                    "cpu-mini",
+                    SEVERITY_INFO,
+                    "GPU yok; CPU mini koşusu bilinçli olarak onaylandı (--cpu-ok). "
+                    "Bu, ≤1B sınıfı bir taban modelde kısa bir LoRA koşusudur: mekaniği "
+                    "kanıtlar, hız ve kalite açısından üretim koşusu değildir.",
+                    "GitHub Actions ubuntu-latest: 4 vCPU / 16 GB RAM / 14 GB disk, GPU yok.",
+                )
+            )
+            if params and params > 1.5e9:
+                add(
+                    Finding(
+                        "cpu-mini-too-big",
+                        SEVERITY_WARNING,
+                        f"CPU mini koşusu için model çok büyük (≈{params / 1e9:.1f}B); "
+                        "4 vCPU'da adım süresi dakikalara çıkar.",
+                        "≤1B bir taban model kullanın (ör. Qwen/Qwen3-0.6B) veya GPU'lu ortama geçin.",
+                    )
+                )
+        elif cpu_ok:
             add(
                 Finding(
                     "cpu-smoke",
