@@ -257,6 +257,26 @@ python -m gokturk.publish --gguf-plan --adapter outputs/gokturk-run/adapter --qu
   desteklenir ama bu modelde ikinci bir yuvarlama ekler; varsayılan MXFP4.
 - Ayrıntı: [`docs/yayinlama-ve-gguf.md`](docs/yayinlama-ve-gguf.md).
 
+### Birleştirmeden servis (dinamik LoRA)
+
+```bash
+# Dört yolu karşılaştır: peft / vllm-lora / llamacpp / merged
+python -m gokturk.serve --plan --base-model Qwen/Qwen3.5-9B --vram-gb 48
+
+# HF Space iskeleti: taban + adaptör, birleştirme yok
+python -m gokturk.serve --emit-space space/ \
+  --base-model Qwen/Qwen3.5-9B --adapter-repo kullanici/gokturk-ultra-lora
+```
+
+| Yol | Birleştirme | Nerede |
+| --- | --- | --- |
+| `peft` | hayır | Python / Space |
+| `vllm-lora` | hayır | GPU sunucusu (bnb tabanda dinamik desteklenmez) |
+| `llamacpp` | hayır | CPU; `convert_lora_to_gguf.py` taban ağırlığı istemez |
+| `merged` | **evet** | yalnızca tek dosya zorunluysa |
+
+[`docs/servis-ve-dinamik-lora.md`](docs/servis-ve-dinamik-lora.md)
+
 ## Değerlendirme
 
 ```bash
@@ -275,7 +295,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 318 test
+python -m pytest tests -q        # 319 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -288,12 +308,12 @@ yolu ise rastgele başlatılmış küçük bir modelle (CPU) doğrulanır.
 configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
 docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md,
-             taban-model-secimi.md
+             taban-model-secimi.md, servis-ve-dinamik-lora.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
-             train, evaluate, logcheck, publish
-tests/       318 otomatik test
+             train, evaluate, logcheck, publish, serve
+tests/       319 otomatik test
 ```
 
 ## Lisans

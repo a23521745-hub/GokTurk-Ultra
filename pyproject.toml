@@ -36,6 +36,8 @@ qlora = ["bitsandbytes>=0.43"]
 unsloth = ["unsloth"]
 # Hugging Face'e adaptör yüklemek için (opsiyonel; çekirdek çalışma için gerekmez).
 hub = ["huggingface-hub>=0.24"]
+# Space iskeleti için gerekli değil; app.py hedef ortamda (Space) kurulur.
+serve = ["gradio>=4.44"]
 dev = ["pytest>=7.4", "ruff>=0.5"]
 
 [project.scripts]

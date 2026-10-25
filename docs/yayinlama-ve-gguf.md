@@ -6,9 +6,12 @@ Bu belge iki soruyu net cevaplar:
 2. Model **`.gguf` / Q4_K_M** olarak çıkacak mı?
 
 Kısa cevap: **(1) evet, artık var** — `gokturk.publish` ile adaptörü özel bir
-depoya yükleyebilirsiniz. **(2) hayır, otomatik değil** ve Kaggle ücretsiz
-katmanında **fiziksel olarak mümkün değil**. Nedenini ve nerede yapılabileceğini
-aşağıda sayılarla yazdım.
+depoya yükleyebilirsiniz. **(2) kısmen** — *birleştirilmiş* tek GGUF Kaggle'da
+üretilemez, ama **adaptörlü GGUF** üretilebilir: `convert_lora_to_gguf.py`
+taban ağırlıklarını istemez. Ayrıntı ve düzeltme:
+[`docs/servis-ve-dinamik-lora.md`](servis-ve-dinamik-lora.md).
+
+Aşağıdaki 2. bölüm **yalnızca birleştirilmiş GGUF** için geçerlidir.
 
 ---
 

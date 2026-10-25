@@ -12,6 +12,13 @@ Two separate jobs live here:
    does **not** run llama.cpp: building it needs ``cmake``, disk and hours, so
    the plan is emitted for the operator (or a later cell) to execute.
 
+.. note::
+   Merging is only needed for a *single-file* deliverable. Three runtimes load
+   the adapter next to the base instead -- see :mod:`gokturk.serve`, which also
+   emits a Hugging Face Space scaffold. In particular
+   ``convert_lora_to_gguf.py`` converts the adapter alone, so an adapter+base
+   GGUF pair can be produced on machines that cannot merge at all.
+
 Why a plan and not a one-liner
 ------------------------------
 Merging a LoRA into ``gpt-oss-20b`` materialises the full model in bf16
