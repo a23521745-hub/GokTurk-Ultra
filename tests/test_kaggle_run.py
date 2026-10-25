@@ -184,6 +184,39 @@ def test_fused_loss_traceback_is_recognised():
     assert "average_tokens_across_devices" in finding["action"]
 
 
+DATAPARALLEL_TRACEBACK = """
+160.2s File "/usr/local/lib/python3.13/dist-packages/torch/nn/parallel/data_parallel.py", line 197, in forward
+160.2s RuntimeError: Caught RuntimeError in replica 0 on device 0.
+160.2s Original Traceback (most recent call last):
+"""
+
+
+def test_dataparallel_replica_error_is_recognised():
+    from gokturk.logcheck import FAILED, analyze_log
+
+    report = analyze_log(DATAPARALLEL_TRACEBACK)
+    codes = {f["code"] for f in report["findings"]}
+    assert "dataparallel-replica" in codes
+    assert report["verdict"] == FAILED
+    finding = next(f for f in report["findings"] if f["code"] == "dataparallel-replica")
+    assert "CUDA_VISIBLE_DEVICES=0" in finding["action"]
+    assert "4-bit" in finding["message"]
+
+
+def test_notebook_pins_a_single_gpu_before_torch_import():
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "CUDA_VISIBLE_DEVICES" in text
+    # ilk kod hücresinde, torch import'undan önce olmalı
+    import json
+
+    nb = json.loads(text)
+    first_code = next(c for c in nb["cells"] if c["cell_type"] == "code")
+    source = "".join(first_code["source"])
+    assert "CUDA_VISIBLE_DEVICES" in source
+    # GPU'ları sorgulayan/import eden her satırdan önce olmalı
+    assert source.index("CUDA_VISIBLE_DEVICES") < source.index("nvidia-smi")
+
+
 def test_fused_loss_rule_does_not_fire_on_normal_logs():
     from gokturk.logcheck import analyze_log
 
@@ -210,14 +243,61 @@ def test_unsloth_plain_loss_flag_sets_the_env_var(monkeypatch):
     assert os.environ["UNSLOTH_RETURN_LOGITS"] == "1"
 
 
-def test_plain_loss_flag_is_opt_in():
+def test_unsloth_plain_loss_is_the_default_and_can_be_overridden():
     import inspect
 
     from gokturk.train import main, run_training
 
-    assert inspect.signature(run_training).parameters["unsloth_plain_loss"].default is False
+    signature = inspect.signature(run_training).parameters["unsloth_plain_loss"]
+    assert signature.default is None, "None = arka uca göre karar ver"
     source = inspect.getsource(main)
     assert "--unsloth-plain-loss" in source
+    assert "--unsloth-fused-loss" in source, "füzyonlu yolu istemek açık bir tercih olmalı"
+
+
+def test_plain_loss_defaults_on_for_unsloth_backend(monkeypatch):
+    """Füzyonlu kayıp iki kez çöktü: unsloth yolunda varsayılan düz kayıp."""
+    import gokturk.train as train_mod
+
+    monkeypatch.delenv("UNSLOTH_RETURN_LOGITS", raising=False)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    # Preflight'ta durdurmak için plan_only; env ayarı plan_only'den ÖNCE yapılır.
+    code = train_mod.main(
+        ["--config", str(CONFIG_4B), "--backend", "unsloth", "--plan-only"]
+    )
+    assert code in (0, 2)
+    import os
+
+    assert os.environ.get("UNSLOTH_RETURN_LOGITS") == "1"
+
+
+def test_fused_loss_and_plain_loss_flags_conflict():
+    from gokturk.train import main
+
+    code = main(
+        [
+            "--config",
+            str(CONFIG_4B),
+            "--unsloth-plain-loss",
+            "--unsloth-fused-loss",
+            "--plan-only",
+        ]
+    )
+    assert code == 4
+
+
+def test_single_gpu_pin_is_respected_and_never_overridden(monkeypatch):
+    import os
+
+    from gokturk.train import pin_single_gpu
+
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    assert pin_single_gpu() is True
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "0"
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    assert pin_single_gpu() is False
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "1", "açık tercih ezilmemeli"
 
 
 def test_notebook_selects_profile_explicitly():

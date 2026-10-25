@@ -151,6 +151,36 @@ o koşu ertelendi (bkz. `docs/taban-model-secimi.md`).
 
 ---
 
+## 3.6 İkinci hata: iki GPU'ya kopyalama (`replica 0`)
+
+**Belirti (2026-10-25, ikinci koşu):** aynı iz, ama üstünde `torch/nn/parallel/data_parallel.py`
+ve `RuntimeError: Caught RuntimeError in replica 0 on device 0` satırları var.
+
+**Ne oluyor:** Kaggle iki T4 gösterdiği için `Trainer`/`accelerate` modeli
+`nn.DataParallel` ile iki karta kopyalamaya çalışıyor. Bu repo hiçbir yerde model
+paralelliği uygulamaz ve **4-bit (bitsandbytes) ağırlıklar çoğaltılamaz**; hata
+kopyanın içinde, asıl nedenden çok uzakta görünür.
+
+**Çözüm (artık varsayılan):** süreç tek kart görür.
+
+- Notebook: ilk kod hücresi, `torch` import edilmeden önce
+  `os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")` yapar.
+- CLI: `python -m gokturk.train ...` varsayılan `--gpus 0` ile aynı şeyi yapar;
+  `CUDA_VISIBLE_DEVICES` zaten ayarlıysa **ezilmez**.
+- `--gpus 0,1` yazarsanız uyarı basılır: bu yol 4-bit modellerde çalışmaz.
+- `logcheck` bu izi `dataparallel-replica` olarak tanır ve tek satırda ne
+  yapılacağını söyler.
+
+Unsloth yolu da (gpt-oss-20b) aynı kurala tabidir: tek kart.
+
+**Not:** ikinci koşunun izinde hâlâ `unsloth_zoo` kareleri var, yani o koşu
+Unsloth arka ucuyla başlamış. 4B profili `--backend transformers` kullanır;
+notebook'u güncel sürümden açtığınızdan emin olun (`git pull`, sonra 8. hücre:
+`RUN_PROFILE = "qwen3.5-4b"`). Unsloth'ta kalmak isterseniz bu repoda artık
+füzyonlu kayıp **varsayılan olarak kapalı** (`--unsloth-fused-loss` ile açılır).
+
+---
+
 ## 4. 60 adımlık ölçüm koşusu
 
 ```bash
@@ -221,6 +251,7 @@ değişmedi.
 - [ ] `--plan-only` → `weights-disk-insufficient` **yok**
 - [ ] Yükleme testi → sınıf `Qwen3_5ForCausalLM`, `model.visual.*` unexpected
 - [ ] `RUN_PROFILE = "qwen3.5-4b"` (Unsloth yolu değil; fused-loss hatası için §3.5)
+- [ ] `CUDA_VISIBLE_DEVICES=0` (ilk hücre; `replica 0` hatası için §3.6)
 - [ ] 60 adım → `logcheck` `SAĞLIKLI` veya `DİKKAT` (kayıp düşüyor)
 - [ ] `adapter/` + `run_manifest.json` indirildi
 - [ ] HF push (özel depo) → adaptör boyutu 30–120 MB

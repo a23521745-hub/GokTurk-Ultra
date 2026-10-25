@@ -95,6 +95,18 @@ _ERROR_RULES: list[tuple[str, str, str, str, str]] = [
         "Sistem RAM'i tükendi (Kaggle 29 GB). Süreç öldürüldü.",
         "Veri dosyasını küçültün, tokenizer/dataset örneklerini parça parça yükleyin.",
     ),
+    (
+        r"Caught (?:\w+Error|\w+Exception) in replica \d+ on device \d+|"
+        r"torch/nn/parallel/data_parallel\.py|nn\.DataParallel",
+        "dataparallel-replica",
+        FAILED,
+        "Model iki GPU'ya kopyalanmaya çalışıldı (nn.DataParallel / 'replica 0') ve "
+        "kopya içinde çöktü. 4-bit (bitsandbytes) ağırlıklar çoğaltılamaz; bu repo "
+        "zaten model paralelliği uygulamıyor.",
+        "Tek kart gösterin: `CUDA_VISIBLE_DEVICES=0` (bu repoda `--gpus 0`, "
+        "varsayılan) veya notebook'ta ilk hücrede `os.environ['CUDA_VISIBLE_DEVICES']='0'`. "
+        "İkinci T4 bilinçli olarak kullanılmaz.",
+    ),
     # Unsloth'un füzyonlu (fused) kayıp çekirdeği, kurulu torch/transformers
     # sürümüyle uyuşmazsa ilk adımda patlar. Kullanıcı için tek anlamı var:
     # veri/model hatası değil, çekirdek uyumsuzluğu → ya kapatılır ya da

@@ -484,6 +484,23 @@ def _cuda_available() -> bool:
         return False
 
 
+def pin_single_gpu(device: str = "0") -> bool:
+    """``CUDA_VISIBLE_DEVICES``'i tek karta sabitle; torç import'undan ÖNCE çağır.
+
+    Bu repo hiçbir yerde model paralelliği uygulamıyor (bkz. ``docs/architecture.md``).
+    Kaggle'da iki T4 görünürse ``Trainer``/``accelerate`` modeli ``nn.DataParallel``
+    ile çoğaltmaya çalışır; 4-bit (bitsandbytes) bir model çoğaltılamaz ve hata
+    ancak derin bir izle "replica 0" olarak görünür. Bu yüzden süreç, kullanıcı
+    açıkça başka bir şey istemediyse **tek kart** görür.
+
+    Zaten ayarlanmış bir ``CUDA_VISIBLE_DEVICES`` değeri **ezilmez**.
+    """
+    if os.environ.get("CUDA_VISIBLE_DEVICES"):
+        return False
+    os.environ["CUDA_VISIBLE_DEVICES"] = device
+    return True
+
+
 def run_training(
     cfg: TrainingConfig,
     *,
@@ -493,9 +510,22 @@ def run_training(
     output_dir: str | None = None,
     skip_preflight: bool = False,
     cpu_ok: bool = False,
-    unsloth_plain_loss: bool = False,
+    unsloth_plain_loss: bool | None = None,
     backend: str = "transformers",
 ) -> int:
+    if backend not in ("transformers", "unsloth"):
+        raise ValueError(f"unknown backend {backend!r}")
+    # Unsloth'un füzyonlu CE çekirdeği, Kaggle imajındaki güncel torch/transformers
+    # ile çalışmıyor (2026-10-25'te iki kez "scalar Tensor" hatası). Bu yüzden
+    # unsloth yolu için varsayılan DÜZ kayıp; füzyonlu yolu istemek açık bir
+    # tercih olmalı (--unsloth-fused-loss).
+    if unsloth_plain_loss is None:
+        unsloth_plain_loss = backend == "unsloth"
+        if unsloth_plain_loss:
+            LOGGER.warning(
+                "Unsloth arka ucu: füzyonlu kayıp varsayılan olarak KAPALI "
+                "(bilinen uyumsuzluk). Açmak için --unsloth-fused-loss."
+            )
     if unsloth_plain_loss:
         # UNSLOTH_RETURN_LOGITS=1, Unsloth'un füzyonlu CE çekirdeğini kapatır ve
         # düz logits + standart CE kullanır. Import'tan ÖNCE ayarlanmalı.
@@ -505,8 +535,7 @@ def run_training(
             "Unsloth füzyonlu kayıp kapatıldı (UNSLOTH_RETURN_LOGITS=1): "
             "daha çok VRAM kullanılır, uyumluluk sorunları bu yolu atlar."
         )
-    if backend not in ("transformers", "unsloth"):
-        raise ValueError(f"unknown backend {backend!r}")
+    pin_single_gpu()
     hardware = detect_hardware()
     dtype = resolve_torch_dtype(cfg.model.dtype, hardware)
 
@@ -737,7 +766,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--unsloth-plain-loss",
         action="store_true",
-        help="Unsloth füzyonlu CE kaybını kapat (UNSLOTH_RETURN_LOGITS=1; daha çok VRAM)",
+        help="Unsloth füzyonlu CE kaybını kapat (UNSLOTH_RETURN_LOGITS=1; daha çok VRAM). "
+        "Unsloth arka ucunda bu zaten varsayılandır.",
+    )
+    parser.add_argument(
+        "--unsloth-fused-loss",
+        action="store_true",
+        help="Unsloth füzyonlu kaybı ZORLA aç (bilinen uyumsuzluk; yalnızca doğrulanmış "
+        "sürümlerle deneyin)",
+    )
+    parser.add_argument(
+        "--gpus",
+        default="0",
+        help="CUDA_VISIBLE_DEVICES değeri (varsayılan '0': tek kart; "
+        "'0,1' vermek DataParallel'a yol açar ve 4-bit modellerde çalışmaz)",
     )
     parser.add_argument(
         "--cpu-ok",
@@ -757,6 +799,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:
         print(f"Yapılandırma hatası: {exc}", file=sys.stderr)
         return 4
+    if args.gpus:
+        if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+            os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+        if "," in os.environ.get("CUDA_VISIBLE_DEVICES", ""):
+            LOGGER.warning(
+                "Birden fazla GPU görünür (CUDA_VISIBLE_DEVICES=%s): bu repo model "
+                "paralelliği uygulamaz; 4-bit modeller DataParallel ile çoğaltılamaz.",
+                os.environ.get("CUDA_VISIBLE_DEVICES"),
+            )
+    if args.unsloth_fused_loss and args.unsloth_plain_loss:
+        print("Hata: --unsloth-fused-loss ve --unsloth-plain-loss birlikte verilemez.", file=sys.stderr)
+        return 4
+    plain_loss = False if args.unsloth_fused_loss else (True if args.unsloth_plain_loss else None)
     if args.model:
         cfg.model.name_or_path = args.model
     if args.train_file:
@@ -772,7 +827,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_dir=args.output_dir,
         skip_preflight=args.skip_preflight,
         cpu_ok=args.cpu_ok,
-        unsloth_plain_loss=args.unsloth_plain_loss,
+        unsloth_plain_loss=plain_loss,
         backend=args.backend,
     )
 

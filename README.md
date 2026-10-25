@@ -321,7 +321,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 358 test
+python -m pytest tests -q        # 363 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -340,7 +340,7 @@ notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
              train, evaluate, logcheck, publish, serve
-tests/       358 otomatik test
+tests/       363 otomatik test
 ```
 
 ## Lisans
