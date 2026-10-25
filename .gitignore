@@ -1,0 +1,39 @@
+# --- Gizli bilgiler -------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+kaggle.json
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+*.so
+
+# --- Eğitim çıktıları ve veri --------------------------------------------
+# Ağırlıklar, checkpoint'ler ve üretilmiş veri repoya girmez.
+outputs/
+data/raw/
+data/processed/
+data/interim/
+wandb/
+runs/
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+*.gguf
+*.log
+logs/

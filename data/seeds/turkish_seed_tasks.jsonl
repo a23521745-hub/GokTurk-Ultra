@@ -1,0 +1,14 @@
+{"id": "seed-tr-qa-001", "task_type": "turkish_qa", "topic": "Türkiye'nin iklim bölgeleri ve tarım üzerindeki etkileri", "level": "orta", "n_variants": 2}
+{"id": "seed-tr-qa-002", "task_type": "turkish_qa", "topic": "Osmanlı Devleti'nde tımar sistemi ve toprak yönetimi", "level": "ileri", "n_variants": 2}
+{"id": "seed-tr-ins-001", "task_type": "instruction_following", "topic": "Bir üniversite öğrencisine üç maddelik etkili ders çalışma planı", "level": "temel", "n_variants": 2}
+{"id": "seed-tr-ins-002", "task_type": "instruction_following", "topic": "Kısa bir iş e-postasını resmi Türkçe ile yeniden yazma", "level": "orta", "n_variants": 2}
+{"id": "seed-tr-sum-001", "task_type": "summarization", "topic": "Yenilenebilir enerji yatırımlarının ekonomik etkileri üzerine bir metnin özetlenmesi", "level": "orta", "n_variants": 1}
+{"id": "seed-tr-code-001", "task_type": "coding", "topic": "Python ile bir listede tekrar eden elemanları bulan fonksiyon", "level": "temel", "n_variants": 2}
+{"id": "seed-tr-code-002", "task_type": "coding", "topic": "Python'da bir metin dosyasını satır satır okuyup kelime sıklığı çıkarma", "level": "orta", "n_variants": 1}
+{"id": "seed-tr-code-003", "task_type": "coding", "topic": "SQL ile müşteri başına son siparişi bulma sorgusu", "level": "orta", "n_variants": 1}
+{"id": "seed-tr-tool-001", "task_type": "tool_calling", "topic": "Hava durumu aracını çağırarak belirli bir şehir için bugünkü tahmini isteme", "level": "temel", "n_variants": 2}
+{"id": "seed-tr-tool-002", "task_type": "tool_calling", "topic": "Takvim aracıyla belirli bir gün için toplantı oluşturma isteği", "level": "orta", "n_variants": 1}
+{"id": "seed-tr-reason-001", "task_type": "reasoning", "topic": "Bir yol-para problemi: bütçe ve mesafe verilerinden en ekonomik ulaşım seçeneğini bulma", "level": "orta", "n_variants": 2}
+{"id": "seed-tr-reason-002", "task_type": "reasoning", "topic": "Verilen öncüllerden geçerli bir çıkarım kurma (mantık)", "level": "ileri", "n_variants": 1}
+{"id": "seed-tr-rewrite-001", "task_type": "rewrite", "topic": "Bir metni daha sade ve anlaşılır Türkçe ile yeniden yazma", "level": "temel", "n_variants": 2}
+{"id": "seed-tr-trans-001", "task_type": "translation", "topic": "İngilizce teknik bir paragrafı akıcı Türkçeye çevirme", "level": "orta", "n_variants": 1}

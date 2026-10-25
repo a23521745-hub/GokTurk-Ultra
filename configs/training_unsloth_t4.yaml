@@ -1,0 +1,75 @@
+# GökTürk-Ultra — Unsloth 4-bit QLoRA (Kaggle 2×T4) yapılandırması
+# ---------------------------------------------------------------------------
+# Bu yapılandırma Unsloth'un yayımlanmış 4-bit QLoRA yolunu hedefler:
+#   * gpt-oss-20b, load_in_4bit=true → yayımlanmış gereksinim ≈14 GB VRAM
+#   * Kaynak: Unsloth "Tutorial: How to Fine-tune gpt-oss" (4-bit QLoRA ≈14 GB,
+#     bf16 LoRA ≈44 GB) ve "gpt-oss: How to Run Guide" (fp16 taşma notları)
+#
+# ÖNEMLİ
+#  * Bu dosya bir GARANTİ değildir: Kaggle'da gerçek koşu yapılmadan hiçbir
+#    başarı iddiası üretilmez. `python -m gokturk.train --backend unsloth
+#    --config configs/training_unsloth_t4.yaml --plan-only` ile doğrulayın.
+#  * Unsloth isteğe bağlı bir bağımlılıktır: `pip install unsloth`.
+#  * T4 bfloat16 desteklemez. Unsloth gpt-oss'ta MoE katmanlarını float32'ye
+#    taşıyarak fp16 taşmasını engeller; yine de uzun koşularda kayıp izlenmeli.
+#  * Eğitim tek GPU'da çalışır; ikinci T4 bu betikte kullanılmaz.
+# ---------------------------------------------------------------------------
+
+model:
+  # Unsloth'un 4-bit gpt-oss yayını. Kimliği çalıştırmadan önce doğrulayın
+  # (HF model kartı veya `unsloth` belgeleri). Alternatif: openai/gpt-oss-20b
+  name_or_path: unsloth/gpt-oss-20b
+  dtype: auto            # T4'te Unsloth fp16/float32 karışımını kendi seçer
+  load_in_4bit: true     # ≈14 GB VRAM yolu (zorunlu)
+  unsloth_4bit: false    # bilgi amaçlı alan; --backend unsloth bunu zaten uygular
+  trust_remote_code: false
+  attn_implementation: sdpa
+
+quantization:
+  method: nf4
+  double_quant: true
+  compute_dtype: auto
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0           # Unsloth 0'ı optimize ediyor
+  target_modules: ["auto"]   # Unsloth yolunda gpt-oss varsayılanları kullanılır
+  bias: none
+
+data:
+  train_file: data/processed/train.jsonl
+  eval_file: data/processed/valid.jsonl
+  # T4'te 1024 güvenli başlangıç; 2048 denenebilir ama VRAM/kararlılık izlenmeli.
+  max_seq_len: 1024
+  prompt_field: prompt
+  response_field: response
+
+optimization:
+  method: qlora
+  epochs: 1
+  # Önce kısa bir ölçüm koşusu: 60 adım ≈ kayıp eğrisinin ilk sinyali.
+  max_steps: 60
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8    # etkin batch = 8
+  learning_rate: 0.00005            # T4'te kararlı başlangıç (5e-5)
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 0.5
+  gradient_checkpointing: true
+  optim: paged_adamw_8bit
+  seed: 3407
+  logging_steps: 1                  # 60 adımda eğriyi görebilmek için
+  save_steps: 30
+  save_total_limit: 2
+  eval_steps: 30
+  report_to: none
+
+output_dir: outputs/unsloth-t4-qlora
+require_preflight_ok: true
+allow_unverified_hardware: false
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+peft: true

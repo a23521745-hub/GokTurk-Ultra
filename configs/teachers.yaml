@@ -1,0 +1,54 @@
+# Öğretmen model yapılandırması (sentetik veri üretimi)
+# ---------------------------------------------------------------------------
+# ÖNEMLİ — bu dosya tek başına çalışmaz, doğrulanmış bilgi bekler:
+#
+#   * `base_url` ve `model` alanları SAĞLAYICININ KENDİ BELGESİNDEN
+#     kopyalanmalıdır. Bu repoda hiçbir endpoint veya model kimliği
+#     uydurulmamıştır.
+#   * Değerler `env:DEGISKEN_ADI` biçiminde verilebilir; böylece doğrulanmış
+#     adres/kimlik repoya yazılmadan kullanılır. Değişken tanımlı değilse
+#     veri üretimi ağa çıkmadan durur (`--dry-run` yalnızca planı yazdırır).
+#   * API anahtarı burada YOKTUR. Yalnızca anahtarın okunacağı ortam
+#     değişkeninin adı yazılır (`api_key_env`). Anahtarı asla dosyaya,
+#     notebook'a, loga veya commit'e koymayın.
+# ---------------------------------------------------------------------------
+
+provider:
+  name: ssyz-evren
+  # EVREN'in OpenAI uyumlu taban adresi (örnek biçim: https://<host>/v1).
+  # Doğrulandıktan sonra doğrudan yazılabilir veya ortam değişkeninden okunur.
+  base_url: "env:EVREN_BASE_URL"
+  api_style: openai-chat
+  api_key_env: EVREN_API_KEY
+  timeout_s: 180
+  max_retries: 4
+  backoff_base_s: 2.0
+  backoff_max_s: 60.0
+  # Sağlayıcının belgelenmiş oran sınırına göre ayarlayın.
+  requests_per_minute: 15
+  max_attempts_per_sample: 3
+  abort_after_consecutive_failures: 8
+  extra_headers: {}
+
+teachers:
+  # Öğretmen 1 — akıl yürütme, mimari ve ileri Türkçe görevleri
+  # NOT: `role` yalnızca YÖNLENDİRME ipucudur; model kimliği ve yetenekleri
+  # sağlayıcının belgesinden doğrulanmalıdır. Roller: general | reasoning | code
+  - name: mimo-v26-pro
+    model: "env:EVREN_MODEL_MIMO"
+    role: "reasoning,general"
+    weight: 1.0
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 2048
+
+  # Öğretmen 2 — kodlama, hata ayıklama ve araç çağırma görevleri
+  - name: kimi-k3
+    model: "env:EVREN_MODEL_KIMI"
+    role: "code,general"
+    weight: 1.0
+    temperature: 0.7
+    top_p: 0.95
+    max_tokens: 2048
+
+generation_prompt_version: v1
