@@ -5,8 +5,22 @@
 | `data/seeds/` | Öğretmen modellere verilen Türkçe tohum görevler | Evet (küçük, sürüm kontrollü) |
 | `data/eval/` | Sabit, elle yazılmış değerlendirme seti | Evet (küçük, sürüm kontrollü) |
 | `data/samples/` | Boru hattını denemek için elle yazılmış örnekler (`sample_train.jsonl` 6, `sample_pro.jsonl` 3) | Evet (küçük, **eğitim veri seti değildir**) |
+| `data/datasets/` | Kullanıcının sağladığı ham CoT veri setleri (`evren_cot_10k.jsonl`, 10.000 satır) | Evet (sürüm kontrollü, 11,5 MB) |
 | `data/raw/` | Öğretmenlerden üretilen ham JSONL | **Hayır** (`.gitignore`) |
 | `data/processed/` | Filtrelenmiş train/valid/test JSONL | **Hayır** (`.gitignore`) |
+
+## Kullanıcı CoT dosyası (hazır veri)
+
+`data/datasets/evren_cot_10k.jsonl` **eğitim şemasında değildir**; önce çevrilir:
+
+```bash
+python -m gokturk.cot_dataset \
+  --input data/datasets/evren_cot_10k.jsonl --out-dir data/processed
+```
+
+Ayrıntı ve ölçülmüş çeşitlilik: [`docs/veri-seti-hazirlama.md`](../docs/veri-seti-hazirlama.md).
+Kısa hâli: 10.000 satır yalnızca **920 tekil talimat** içerir; tekilleştirmeden
+sonra ~1.300 örnek kalır.
 
 ## Veri akışı
 
