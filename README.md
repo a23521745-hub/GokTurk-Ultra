@@ -172,6 +172,23 @@ paketleri kurar, veriyi doğrular, sentetik veri planını gösterir, duman test
 ölçüm koşusu** yapar. Hiçbiri uygun değilse dürüstçe durur ve nedenini yazar
 (bkz. `docs/architecture.md` §6–7).
 
+Kaggle'da daha önce bulunmadıysanız veya log okumak zor geliyorsa:
+**[`docs/kaggle-rehberi.md`](docs/kaggle-rehberi.md)** — GPU/oturum/kota
+kavramları, her hücrenin ne yaptığı, `loss` ve `grad_norm` satırlarının nasıl
+okunacağı, hata sözlüğü.
+
+### Eğitim logunu makineye okutmak
+
+```bash
+python -m gokturk.logcheck --log kaggle_log.txt
+python -m gokturk.logcheck --manifest outputs/gokturk-run/run_manifest.json
+```
+
+Dört karar verir: `SAĞLIKLI`, `DİKKAT`, `BOZUK` (NaN/ıraksama), `BAŞARISIZ`
+(çökme). Çökme sebebini ve tek satırlık çözümü yazar. **Yalnızca eğitimin
+mekaniğini denetler** — model kalitesi hakkında hiçbir şey söylemez; kalite
+için `gokturk.evaluate` + insan incelemesi gerekir.
+
 ## Veri inceleme akışı
 
 Öğretmen çıktısı otomatik olarak doğru sayılmaz:
@@ -204,7 +221,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 232 test
+python -m pytest tests -q        # 238 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -216,12 +233,12 @@ yolu ise rastgele başlatılmış küçük bir modelle (CPU) doğrulanır.
 ```
 configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
-docs/        architecture.md
+docs/        architecture.md, kaggle-rehberi.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
-             train, evaluate
-tests/       232 otomatik test
+             train, evaluate, logcheck
+tests/       238 otomatik test
 ```
 
 ## Lisans
