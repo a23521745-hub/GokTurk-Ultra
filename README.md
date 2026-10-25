@@ -132,6 +132,30 @@ python -m gokturk.data_generation --per-seed 1 \
 - 401/403 → anında durur. Art arda hata eşiği aşılırsa koşu güvenli biçimde
   durur ve o ana kadar yazılan veri korunur (`--no-resume` ile sıfırdan).
 
+## Taban model seçimi (v1)
+
+| Profil | Taban | T4'te 4-bit QLoRA | CPU'da (2 vCPU) | Ne zaman |
+| --- | --- | --- | --- | --- |
+| `configs/training_unsloth_t4.yaml` | `openai/gpt-oss-20b` | sınırda (~14 GB, Unsloth) | çok yavaş | H200 sınıfı GPU çıkınca |
+| `configs/training_qwen3_5_9b_t4.yaml` | `Qwen/Qwen3.5-9B` | **≈7.2 GB** (seq 1024) | sınırda (~1.5–3.6 tok/s) | önerilen v1 |
+| `configs/training_qwen3_14b_t4.yaml` | `Qwen/Qwen3-14B` | ≈11.8 GB (seq 1024) | çok yavaş | metin-only, bugün çalışan yol |
+| — | `Qwen/Qwen3.5-4B` | ≈3.2 GB | ~3–8 tok/s | CPU demosu |
+
+Sayılar bu repodaki araçların çıktısıdır; gerekçe, HF Spaces ücretsiz kota
+gerçeği ve göç kontrol listesi:
+[`docs/taban-model-secimi.md`](docs/taban-model-secimi.md).
+
+```bash
+# Eğitim öncesi: sığar mı?
+python -m gokturk.train --config configs/training_qwen3_5_9b_t4.yaml --plan-only
+# Servis öncesi: CPU'da çalışır mı, kaç token/sn?
+python -m gokturk.publish --serve-plan --base-model Qwen/Qwen3.5-9B --ram-gb 16 --vcpu 2
+```
+
+> Not: Qwen3.5 ailesi görüntü+metin mimarisidir; metin SFT'si için yükleyici
+> yolunun `AutoProcessor`'a genişletilmesi **henüz yapılmadı**. Bugün kesin
+> çalışan metin yolu Qwen3-14B profilidir.
+
 ## Eğitim
 
 ```bash
@@ -251,7 +275,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 297 test
+python -m pytest tests -q        # 318 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -263,12 +287,13 @@ yolu ise rastgele başlatılmış küçük bir modelle (CPU) doğrulanır.
 ```
 configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
-docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md
+docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md,
+             taban-model-secimi.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
              train, evaluate, logcheck, publish
-tests/       297 otomatik test
+tests/       318 otomatik test
 ```
 
 ## Lisans

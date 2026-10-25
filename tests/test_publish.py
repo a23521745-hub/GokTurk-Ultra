@@ -181,12 +181,13 @@ def test_push_adapter_lazy_imports_hub(adapter_dir, monkeypatch):
 # GGUF planning
 # ---------------------------------------------------------------------------
 def test_estimate_sizes_matches_published_magnitudes():
-    sizes = estimate_sizes(20.9, quant="Q4_K_M")
+    sizes = estimate_sizes(20.9, quant="Q4_K_M", moe_expert_share=0.93)
     assert 40 <= sizes["merged_gb"] <= 44      # 20.9B * 2 bytes
     # Published gpt-oss-20b builds: Q4_K_M ≈ 11.7 GB, MXFP4 ≈ 12.1 GB, because
     # the MoE experts stay at MXFP4 in every quant.
     assert 10.0 <= sizes["final_gb"] <= 12.0
-    assert 10.0 <= estimate_sizes(20.9, quant="mxfp4")["final_gb"] <= 12.0
+    native = estimate_sizes(20.9, quant="mxfp4", moe_expert_share=0.93)
+    assert 10.0 <= native["final_gb"] <= 12.0
 
 
 def test_estimate_sizes_rejects_unknown_quant_and_dtype():
@@ -296,3 +297,95 @@ def test_publish_module_has_no_hardcoded_token():
     assert "api_key" not in text.lower()
     # The token may only be read from the environment.
     assert 'os.environ.get(HF_TOKEN_ENV' in text
+
+
+# ---------------------------------------------------------------------------
+# dense vs MoE sizing, CPU serving plan
+# ---------------------------------------------------------------------------
+def test_estimate_sizes_is_dense_by_default():
+    """Qwen (dense) at Q4_K_M ≈ 9 GB for 14.8B; the MoE correction must not leak."""
+    sizes = estimate_sizes(14.8, quant="Q4_K_M")
+    assert 8.0 <= sizes["final_gb"] <= 10.0
+
+
+def test_estimate_sizes_moe_share_only_affects_final_size():
+    dense = estimate_sizes(20.9, quant="Q4_K_M")
+    moe = estimate_sizes(20.9, quant="Q4_K_M", moe_expert_share=0.93)
+    assert moe["final_gb"] < dense["final_gb"]
+    # Experts stay at 4.25 bits, so a gpt-oss Q4_K_M lands near the published 11.7 GB.
+    assert 10.0 <= moe["final_gb"] <= 12.0
+    assert dense["merged_gb"] == moe["merged_gb"]
+
+
+def test_estimate_sizes_rejects_bad_share():
+    with pytest.raises(PublishError):
+        estimate_sizes(9.0, moe_expert_share=1.5)
+
+
+def test_serve_plan_fits_and_is_fast_enough_for_4b():
+    from gokturk.publish import plan_cpu_serving
+
+    plan = plan_cpu_serving(4.0, quant="Q4_K_M", ram_gb=16.0, vcpus=2)
+    assert plan["verdict"] == "uygun"
+    assert plan["total_gb"] < 16.0
+    assert plan["tokens_per_s_range"][1] > 5
+
+
+def test_serve_plan_marks_9b_as_borderline_on_two_vcpus():
+    from gokturk.publish import plan_cpu_serving
+
+    plan = plan_cpu_serving(9.0, quant="Q4_K_M", ram_gb=16.0, vcpus=2)
+    assert plan["verdict"] == "sinirda"
+    assert plan["weights_gb"] < 7.0
+    assert any("hız" in p for p in plan["problems"])
+
+
+def test_serve_plan_rejects_14b_on_cpu_speed():
+    from gokturk.publish import plan_cpu_serving
+
+    plan = plan_cpu_serving(14.8, quant="Q4_K_M", ram_gb=16.0, vcpus=2)
+    assert plan["verdict"] == "cok-yavas"
+
+
+def test_serve_plan_detects_memory_wall():
+    from gokturk.publish import plan_cpu_serving
+
+    plan = plan_cpu_serving(27.0, quant="Q8_0", ram_gb=16.0, vcpus=2)
+    assert plan["verdict"] == "sigmiyor"
+    assert any("bellek" in p for p in plan["problems"])
+
+
+def test_kv_cache_grows_with_context():
+    from gokturk.publish import plan_cpu_serving
+
+    short = plan_cpu_serving(9.0, context_tokens=2048, ram_gb=16.0)
+    long = plan_cpu_serving(9.0, context_tokens=16384, ram_gb=16.0)
+    assert long["kv_cache_gb"] > short["kv_cache_gb"]
+    # Sanity: a 9B model must not claim hundreds of GB of KV cache.
+    assert long["kv_cache_gb"] < 5.0
+
+
+def test_cli_serve_plan_models_and_codes(capsys):
+    code = main(["--serve-plan", "--base-model", "Qwen/Qwen3.5-4B", "--ram-gb", "16", "--vcpu", "2", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["verdict"] == "uygun"
+
+    code = main(["--serve-plan", "--base-model", "Qwen/Qwen3-14B", "--ram-gb", "16", "--vcpu", "2", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert payload["verdict"] != "uygun"
+
+
+def test_cli_serve_plan_unknown_model(capsys):
+    assert main(["--serve-plan", "--base-model", "nobody/unknown-7b"]) == 4
+    assert "Bilinmeyen taban model" in capsys.readouterr().err
+
+
+def test_cli_serve_plan_human_output(capsys):
+    code = main(["--serve-plan", "--base-model", "Qwen/Qwen3.5-9B", "--ram-gb", "16", "--vcpu", "2"])
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "CPU SERVİS PLANI" in out
+    assert "SINIRDA" in out
+    assert "token/sn" in out

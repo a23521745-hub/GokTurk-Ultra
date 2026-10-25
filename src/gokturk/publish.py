@@ -57,7 +57,19 @@ BASE_PARAMS_B = {
     "unsloth/gpt-oss-20b": 20.9,
     "unsloth/gpt-oss-20b-unsloth-bnb-4bit": 20.9,
     "openai/gpt-oss-120b": 116.8,
+    # Qwen tabanları (v1 adayları); kimlikler HF model API'sinden doğrulandı.
+    "Qwen/Qwen3.5-9B": 9.0,
+    "Qwen/Qwen3.5-4B": 4.0,
+    "Qwen/Qwen3.5-27B": 27.0,
+    "Qwen/Qwen3-14B": 14.8,
 }
+
+#: Effective memory bandwidth assumed per vCPU when running a quantised model
+#: on CPU. A cloud vCPU is not a desktop core: sub-10 GB/s is normal, and the
+#: range below is deliberately wide so the report shows an interval instead of
+#: a single confident number. Token generation on CPU is bandwidth-bound, so
+#: tokens/s ≈ bandwidth / model_bytes.
+CPU_BANDWIDTH_GBPS_RANGE = (4.0, 10.0)
 
 #: Quantisation targets understood by the planner.
 #: ``bits`` is the effective packed size used for the size estimate.
@@ -345,6 +357,7 @@ def estimate_sizes(
     *,
     quant: str = DEFAULT_QUANT,
     merge_dtype: str = "bfloat16",
+    moe_expert_share: float = 0.0,
 ) -> dict[str, float]:
     """Return the three sizes a GGUF build needs, in GB.
 
@@ -358,12 +371,14 @@ def estimate_sizes(
         raise PublishError(f"bilinmeyen quant {quant!r}; desteklenen: {sorted(QUANTS)}")
     if merge_dtype not in DTYPE_BYTES:
         raise PublishError(f"bilinmeyen dtype {merge_dtype!r}; desteklenen: {sorted(DTYPE_BYTES)}")
+    if not 0.0 <= moe_expert_share <= 1.0:
+        raise PublishError(f"moe_expert_share must be in [0, 1], got {moe_expert_share}")
     params = params_b * 1e9
-    # gpt-oss experts stay at MXFP4 whatever the target quant is, so the final
-    # size is dominated by the expert share. Without this the model would
-    # predict ≈13 GB for Q4_K_M where published builds are ≈11.7 GB.
-    expert_bits = MXFP4_BITS * MOE_EXPERT_SHARE
-    other_bits = QUANTS[quant]["bits"] * (1.0 - MOE_EXPERT_SHARE)
+    # For gpt-oss the experts stay at MXFP4 whatever the target quant is, so the
+    # final size is dominated by the expert share. Dense models (Qwen) have no
+    # such share and are sized directly by the target quant.
+    expert_bits = MXFP4_BITS * moe_expert_share
+    other_bits = QUANTS[quant]["bits"] * (1.0 - moe_expert_share)
     return {
         "merged_gb": round(params * DTYPE_BYTES[merge_dtype] / GB, 1),
         "gguf_unquantized_gb": round(params * DTYPE_BYTES["float16"] / GB, 1),
@@ -391,7 +406,12 @@ def plan_gguf(
     """
     if params_b is None:
         params_b = BASE_PARAMS_B.get(base_model, BASE_PARAMS_B["openai/gpt-oss-20b"])
-    sizes = estimate_sizes(params_b, quant=quant, merge_dtype=merge_dtype)
+    # Only gpt-oss ships MXFP4 experts; every other family is dense at the
+    # target quant, so the expert correction must not leak into them.
+    expert_share = MOE_EXPERT_SHARE if "gpt-oss" in base_model else 0.0
+    sizes = estimate_sizes(
+        params_b, quant=quant, merge_dtype=merge_dtype, moe_expert_share=expert_share
+    )
 
     ram = available_ram_gb if available_ram_gb is not None else detect_ram_gb()
     disk = available_disk_gb if available_disk_gb is not None else detect_disk_gb(Path(out_dir))
@@ -502,6 +522,106 @@ def plan_gguf(
         "caveat": (
             "RAM ve disk değerleri tahmindir (≈). Dönüşüm bu modülde çalıştırılmaz; "
             "komutlar sizin makinanizde/notebook'ta çalıştırılır."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# CPU serving feasibility (Hugging Face Spaces CPU Basic, small VMs)
+# ---------------------------------------------------------------------------
+#: KV-cache bytes per token per *million* parameters, approximate. Derived from
+#: the candidate families' GQA geometry: 40 layers, 8 KV heads, head_dim 128,
+#: fp16 → 2 · 40 · 8 · 128 · 2 B ≈ 164 kB/token for a 14.8B model, i.e. ≈11 B per
+#: (token · million params). Rounded up to 12; real values move with layer count,
+#: GQA ratio, dtype and context.
+KV_BYTES_PER_TOKEN_PER_M_PARAM = 12.0
+
+
+def plan_cpu_serving(
+    params_b: float,
+    *,
+    quant: str = "Q4_K_M",
+    context_tokens: int = 4096,
+    ram_gb: float | None = 16.0,
+    vcpus: int = 2,
+    answer_tokens: int = 300,
+    moe_expert_share: float = 0.0,
+) -> dict[str, Any]:
+    """Answer "can this model be served on a free CPU box?" with numbers.
+
+    Models the three things that decide the answer:
+
+    * **weights** -- parameters x bits/8 (same model as :func:`estimate_sizes`);
+    * **KV cache** -- grows with context; this is what kills long chats on 16 GB;
+    * **speed** -- CPU generation is memory-bandwidth bound, so tokens/s is
+      approximated as bandwidth / weights_bytes and reported as a *range*.
+
+    The verdict is deliberately blunt: sub-2 tokens/s is not a chat experience,
+    it is a demo that takes minutes per answer.
+    """
+    if quant not in QUANTS:
+        raise PublishError(f"bilinmeyen quant {quant!r}; desteklenen: {sorted(QUANTS)}")
+    sizes = estimate_sizes(params_b, quant=quant, moe_expert_share=moe_expert_share)
+    weights = sizes["final_gb"]
+    kv = round(
+        params_b * 1000 * KV_BYTES_PER_TOKEN_PER_M_PARAM * context_tokens / GB, 2
+    )
+    total = round(weights + kv, 2)
+
+    low_bw, high_bw = CPU_BANDWIDTH_GBPS_RANGE
+    slow = round(low_bw * max(vcpus, 1) / weights, 2) if weights else 0.0
+    fast = round(high_bw * max(vcpus, 1) / weights, 2) if weights else 0.0
+    # Optimistic end of the range is quoted for the "how long do I wait" answer.
+    seconds = round(answer_tokens / fast, 1) if fast else None
+
+    problems: list[str] = []
+    if ram_gb is not None and total > ram_gb * 0.9:
+        problems.append(
+            f"bellek yetersiz: ağırlık {weights} GB + KV {kv} GB = {total} GB, "
+            f"kullanılabilir ≈{ram_gb} GB (×0.9 emniyet payı)"
+        )
+    # The verdict uses the *pessimistic* end of the bandwidth range for the
+    # "unusable" call and the optimistic end for "comfortable": a model that is
+    # only fast when bandwidth is best is not comfortable.
+    if slow < 1.0:
+        problems.append(
+            f"hız yetersiz: {slow}–{fast} token/sn tahmini; {answer_tokens} token'lık "
+            "bir yanıt birkaç dakika sürer, sohbet deneyimi olmaz"
+        )
+    elif slow < 2.0:
+        problems.append(
+            f"hız sınırda: {slow}–{fast} token/sn tahmini. Kısa yanıtlarda kabul "
+            "edilebilir, uzun yanıtlarda dakikalar sürer."
+        )
+
+    if any("bellek" in p for p in problems):
+        verdict = "sigmiyor"
+    elif any("yetersiz" in p for p in problems):
+        verdict = "cok-yavas"
+    elif problems:
+        verdict = "sinirda"
+    else:
+        verdict = "uygun"
+
+    return {
+        "verdict": verdict,
+        "params_b": params_b,
+        "quant": quant,
+        "context_tokens": context_tokens,
+        "weights_gb": weights,
+        "kv_cache_gb": kv,
+        "total_gb": total,
+        "ram_gb": ram_gb,
+        "vcpus": vcpus,
+        "tokens_per_s_range": [slow, fast],
+        "seconds_per_answer": seconds,
+        "answer_tokens": answer_tokens,
+        "problems": problems,
+        "note": (
+            "Tahmin: CPU üretimi bellek bant genişliğine bağlıdır; bant genişliği "
+            f"{low_bw}–{high_bw} GB/sn/vCPU varsayıldı. Gerçek hız çekirdek "
+            "tipine, llama.cpp derleme bayraklarına ve bağlam uzunluğuna göre "
+            "değişir; bu bir ölçüm değildir."
         ),
     }
 
@@ -622,10 +742,49 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(QUANTS),
         help="GGUF hedefi (varsayılan mxfp4: gpt-oss'un doğal biçimi)",
     )
+    parser.add_argument(
+        "--serve-plan",
+        action="store_true",
+        help="CPU'da servis edilebilir mi? (RAM/bağlam/hız hesabı)",
+    )
+    parser.add_argument("--context", type=int, default=4096, help="Bağlam token sayısı")
+    parser.add_argument(
+        "--serve-quant",
+        default="Q4_K_M",
+        choices=sorted(QUANTS),
+        help="CPU servisi için quant (varsayılan Q4_K_M; MXFP4 gpt-oss'a özgü)",
+    )
+    parser.add_argument("--ram-gb", type=float, default=None, help="Kullanılabilir RAM (GB)")
+    parser.add_argument("--vcpu", type=int, default=2, help="CPU çekirdek sayısı")
     parser.add_argument("--json", action="store_true", help="Makine okunur çıktı")
     args = parser.parse_args(argv)
 
     try:
+        if args.serve_plan:
+            params_b = BASE_PARAMS_B.get(args.base_model)
+            if params_b is None:
+                print(
+                    f"Bilinmeyen taban model: {args.base_model}. "
+                    f"Bilinenler: {sorted(BASE_PARAMS_B)}",
+                    file=sys.stderr,
+                )
+                return 4
+            plan = plan_cpu_serving(
+                params_b,
+                quant=args.serve_quant,
+                context_tokens=args.context,
+                ram_gb=args.ram_gb if args.ram_gb is not None else detect_ram_gb(),
+                vcpus=args.vcpu,
+                moe_expert_share=(
+                    MOE_EXPERT_SHARE if "gpt-oss" in args.base_model else 0.0
+                ),
+            )
+            if args.json:
+                print(json.dumps(plan, ensure_ascii=False, indent=2))
+            else:
+                _print_serve_plan(plan, args.base_model)
+            return 0 if plan["verdict"] == "uygun" else 2
+
         if args.card_only:
             card = build_model_card(
                 _load_manifest(args.manifest),
@@ -703,6 +862,35 @@ def main(argv: list[str] | None = None) -> int:
     except PublishError as exc:
         print(f"Hata: {exc}", file=sys.stderr)
         return 4
+
+
+def _print_serve_plan(plan: dict[str, Any], model: str) -> None:
+    verdicts = {
+        "uygun": "UYGUN — bu donanımda rahat servis edilir",
+        "sinirda": "SINIRDA — çalışır ama yanıtlar yavaş",
+        "cok-yavas": "ÇOK YAVAŞ — sığar, sohbet deneyimi olmaz",
+        "sigmiyor": "SIĞMIYOR — bellek yetmiyor",
+    }
+    print("=" * 72)
+    print("CPU SERVİS PLANI —", model)
+    print("=" * 72)
+    print(f"{'KARAR':<17}: {verdicts.get(plan['verdict'], plan['verdict'])}")
+    print(f"{'Ağırlıklar':<17}: ≈{plan['weights_gb']} GB ({plan['quant']})")
+    print(
+        f"{'KV önbelleği':<17}: ≈{plan['kv_cache_gb']} GB "
+        f"({plan['context_tokens']} token bağlam)"
+    )
+    print(f"{'Toplam':<17}: ≈{plan['total_gb']} GB / RAM {plan['ram_gb']} GB")
+    low, high = plan["tokens_per_s_range"]
+    print(f"{'Hız':<17}: {low}–{high} token/sn ({plan['vcpus']} vCPU)")
+    if plan["seconds_per_answer"]:
+        print(
+            f"{'Bir yanıt':<17}: ≈{plan['seconds_per_answer']} sn "
+            f"({plan['answer_tokens']} token)"
+        )
+    for problem in plan["problems"]:
+        print("  ✗", problem)
+    print("\n" + plan["note"])
 
 
 def _print_gguf_plan(plan: dict[str, Any]) -> None:

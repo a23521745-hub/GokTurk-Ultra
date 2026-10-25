@@ -49,6 +49,47 @@ KNOWN_MODELS: dict[str, dict[str, Any]] = {
         "license": "Apache-2.0",
         "source": "openai/gpt-oss-120b model card",
     },
+    # --- Qwen tabanları (v1 adayları) -------------------------------------
+    # Kimlikler ve parametre sayıları Hugging Face model API'sinden okundu
+    # (2026-10-25). Qwen3.5 ailesi görüntü+metin (image-text-to-text) mimarisi
+    # kullanır: metin SFT'si çalışır ama yükleyici AutoProcessor ister ve
+    # görüntü kulesi de bellekte yer kaplar.
+    "Qwen/Qwen3.5-9B": {
+        "params": 9.0e9,
+        "active_params": 9.0e9,
+        "architecture": "Qwen3_5ForConditionalGeneration (görüntü+metin)",
+        "native_format": "bf16",
+        "gated": False,
+        "license": "Apache-2.0",
+        "source": "huggingface.co/api/models/Qwen/Qwen3.5-9B (2026-10-25)",
+    },
+    "Qwen/Qwen3.5-4B": {
+        "params": 4.0e9,
+        "active_params": 4.0e9,
+        "architecture": "Qwen3_5ForConditionalGeneration (görüntü+metin)",
+        "native_format": "bf16",
+        "gated": False,
+        "license": "Apache-2.0",
+        "source": "huggingface.co/api/models/Qwen/Qwen3.5-4B (2026-10-25)",
+    },
+    "Qwen/Qwen3.5-27B": {
+        "params": 27.0e9,
+        "active_params": 27.0e9,
+        "architecture": "Qwen3_5ForConditionalGeneration (görüntü+metin)",
+        "native_format": "bf16",
+        "gated": False,
+        "license": "Apache-2.0",
+        "source": "huggingface.co/api/models/Qwen/Qwen3.5-27B (2026-10-25)",
+    },
+    "Qwen/Qwen3-14B": {
+        "params": 14.8e9,
+        "active_params": 14.8e9,
+        "architecture": "Qwen3ForCausalLM (metin)",
+        "native_format": "bf16",
+        "gated": False,
+        "license": "Apache-2.0",
+        "source": "Qwen/Qwen3-14B model card (14.8B, 13.2B non-embedding)",
+    },
 }
 
 #: Published minimum VRAM for gpt-oss fine-tuning (Unsloth documentation).
