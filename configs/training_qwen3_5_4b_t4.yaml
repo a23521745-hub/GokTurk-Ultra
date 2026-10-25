@@ -1,0 +1,83 @@
+# GökTürk-Ultra v1 — Qwen3.5-4B tabanı (Kaggle T4, 4-bit QLoRA) — İLK GERÇEK KOŞU
+# ---------------------------------------------------------------------------
+# NEDEN 4B (2026-10-25 kararı)
+#   * Disk en sert kısıt: Kaggle'da ölçülen boş alan **19,2 GB**. 9B'nin bf16
+#     ağırlıkları ≈18 GB (sınırda), 14B'ninki ≈29,6 GB (sığmaz). 4B'nin HF'teki
+#     toplam depolama boyutu **9,33 GB** (2 safetensors parçası) → rahat sığar.
+#   * VRAM: seq 1024'te ≈3,2 GB, seq 2048'te ≈4,0 GB (bu repodaki tahmin aracı,
+#     T4 15,6 GB). 9B'de bu 7,2/9,1 GB. 4B'de OOM riski pratikte yok.
+#   * Amaç kalite değil: **gerçek veri + gerçek GPU + gerçek adaptör** ile boru
+#     hattını doğrulamak. 4B ile 60 adım, 9B'ye geçmeden önce ucuz bir sigorta.
+#
+# ÇOK KİPLİ AMA METİN YOLU ÇALIŞIR (doğrulandı)
+#   Qwen3.5 mimarisi görüntü+metin (`Qwen3_5ForConditionalGeneration`). Buna
+#   rağmen AutoProcessor gerekmez: transformers'ta `Qwen3_5ForCausalLM`
+#   `_keys_to_ignore_on_load_unexpected = [r"^mtp.*", r"^model.visual.*"]`
+#   tanımlar, yani görüntü kulesi ağırlıkları yüklenirken **yok sayılır** ve
+#   `AutoModelForCausalLM` + `AutoTokenizer` metin SFT'si için yeterlidir.
+#   Kaynak: transformers `models/qwen3_5/modeling_qwen3_5.py` (2026-10-25).
+#   Yine de gerçek checkpoint üzerinde ilk doğrulama Kaggle'da yapılmalıdır:
+#   yükleme logunda `model.visual.*` "unexpected key" olarak görünmelidir.
+#
+# SIRALAMA
+#   1) `--plan-only` ile ön denetim (VRAM + disk) → 2) 60 adım ölçüm →
+#   3) kaybı/logcheck'i oku → 4) kararlıysa adım sayısını artır.
+#   Bu dosya bir garanti değildir; gerçek koşu yapılmadan başarı iddiası yok.
+# ---------------------------------------------------------------------------
+
+model:
+  name_or_path: Qwen/Qwen3.5-4B
+  dtype: auto            # T4 bf16 desteklemez -> fp16
+  load_in_4bit: true     # NF4 QLoRA
+  unsloth_4bit: false    # Unsloth yolu gpt-oss için; burada transformers+bnb
+  trust_remote_code: false
+  attn_implementation: sdpa
+
+quantization:
+  method: nf4
+  double_quant: true
+  compute_dtype: auto
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  # Qwen ailesi llama-tipi projeksiyon adlarını kullanır. Bu liste llama.cpp
+  # dönüştürücüsüyle de uyumlu (embed_tokens/lm_head YOK).
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  bias: none
+
+data:
+  train_file: data/processed/train.jsonl
+  eval_file: data/processed/valid.jsonl
+  max_seq_len: 1024      # 1024 güvenli başlangıç; 2048'e ölçümden sonra çıkın
+  prompt_field: prompt
+  response_field: response
+
+optimization:
+  method: qlora
+  epochs: 1
+  max_steps: 60          # önce ölçüm koşusu (süre + kayıp), sonra ölçek
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8     # etkin batch = 16
+  learning_rate: 0.0001
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  gradient_checkpointing: true
+  optim: paged_adamw_8bit
+  seed: 3407
+  logging_steps: 1
+  save_steps: 30
+  save_total_limit: 2
+  eval_steps: 30
+  report_to: none
+
+output_dir: outputs/qwen3_5-4b-t4-qlora
+require_preflight_ok: true
+allow_unverified_hardware: false
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+peft: true

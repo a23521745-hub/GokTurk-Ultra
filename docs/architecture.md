@@ -24,6 +24,9 @@ src/gokturk/
   schema.py            JSONL kayıt şeması (sürümlü)
   config.py            Katı YAML yükleme + doğrulama; sırlar yalnızca env'den
   teachers.py          OpenAI-uyumlu öğretmen adaptörü (retry/timeout/limit, rol yönlendirme)
+  logcheck.py          eğitim logu/manifest okuma (mekanik teşhis)
+  publish.py           HF adaptör yükleme + GGUF/CPU-servis fizibilite planı
+  serve.py             birleştirmeden servis (dinamik LoRA) + Space iskeleti
   task_specs.py        10 görev ailesi: istemler, konu bankaları, katı doğrulayıcılar
   curriculum.py        Deterministik plan (N örnek → aile/konu/seviye/rol) + maliyet
   data_generation.py   Basic (taslak+yanıt) ve PRO (N aday + öz-eleştiri/düzeltme) üretim
@@ -36,13 +39,18 @@ configs/
   teachers.yaml        Sağlayıcı + öğretmen modeller (env referanslı, rol yönlendirmeli)
   training.yaml        Eğitim ayarları — generic transformers yolu
   training_unsloth_t4.yaml  Unsloth 4-bit QLoRA (Kaggle 2×T4) ayarları
+  training_mini_cpu.yaml    Mini koşu: 0.6B, fp32, 30 adım (CPU / GitHub runner)
+  training_qwen3_5_4b_t4.yaml  İlk gerçek Kaggle koşusu: 4B, 4-bit QLoRA, seq 1024
+.github/workflows/
+  ci.yml               ruff + pytest + veri hattı planı (anahtar gerektirmez)
+  mini-adapter.yml     Elle tetiklenen mini LoRA → manifest → logcheck → GGUF LoRA
 data/
   seeds/               Türkçe tohum görevler
   eval/                Sabit değerlendirme seti (16 öğe, 4 kategori)
   samples/             6 elle yazılmış örnek (eğitim seti DEĞİL)
 notebooks/
   kaggle_training.ipynb  Kaggle deneyi (ön denetim → duman testi → dürüst duruş)
-tests/                 125 otomatik test
+tests/                 367 otomatik test
 ```
 
 Veri akışı:

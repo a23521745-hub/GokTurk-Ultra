@@ -21,6 +21,7 @@ model/ajan prototipi için **veri, eğitim ve değerlendirme altyapısı**.
 | Eğitim | `src/gokturk/train.py` | `--backend transformers` (LoRA/QLoRA/full) veya `--backend unsloth` (4-bit QLoRA); prompt maskeleme; ön denetim geçmezse **başlamaz**; CPU duman testi |
 | Değerlendirme | `src/gokturk/evaluate.py` | Biçim kontrolü, sabit Türkçe test setinde kural tabanlı skorlama, opsiyonel (doğrulanmamış) yargıç |
 | Kaggle deneyi | `notebooks/kaggle_training.ipynb` | Ortam → paketler → veri doğrulama → duman testi → dürüst tanılama → çıktı kaydı |
+| GitHub Actions mini eğitim | `.github/workflows/mini-adapter.yml` + `configs/training_mini_cpu.yaml` | CPU runner'da 0.6B LoRA (30–100 adım) → manifest → log denetimi → adaptör-only GGUF; boru hattı kanıtı, kalite iddiası değil |
 
 ## Kurulum
 
@@ -132,6 +133,33 @@ python -m gokturk.data_generation --per-seed 1 \
 - 401/403 → anında durur. Art arda hata eşiği aşılırsa koşu güvenli biçimde
   durur ve o ana kadar yazılan veri korunur (`--no-resume` ile sıfırdan).
 
+## Taban model seçimi (v1)
+
+| Profil | Taban | T4'te 4-bit QLoRA | CPU'da (2 vCPU) | Ne zaman |
+| --- | --- | --- | --- | --- |
+| `configs/training_unsloth_t4.yaml` | `openai/gpt-oss-20b` | sınırda (~14 GB, Unsloth) | çok yavaş | H200 sınıfı GPU çıkınca |
+| `configs/training_qwen3_5_9b_t4.yaml` | `Qwen/Qwen3.5-9B` | **≈7.2 GB** (seq 1024) | sınırda (~1.5–3.6 tok/s) | önerilen v1 |
+| `configs/training_qwen3_14b_t4.yaml` | `Qwen/Qwen3-14B` | ≈11.8 GB (seq 1024) | çok yavaş | metin-only, bugün çalışan yol |
+| — | `Qwen/Qwen3.5-4B` | ≈3.2 GB | ~3–8 tok/s | CPU demosu |
+
+Sayılar bu repodaki araçların çıktısıdır; gerekçe, HF Spaces ücretsiz kota
+gerçeği ve göç kontrol listesi:
+[`docs/taban-model-secimi.md`](docs/taban-model-secimi.md).
+
+```bash
+# Eğitim öncesi: sığar mı?
+python -m gokturk.train --config configs/training_qwen3_5_9b_t4.yaml --plan-only
+# Servis öncesi: CPU'da çalışır mı, kaç token/sn?
+python -m gokturk.publish --serve-plan --base-model Qwen/Qwen3.5-9B --ram-gb 16 --vcpu 2
+```
+
+> Not (düzeltildi, 2026-10-25): Qwen3.5 ailesi görüntü+metin mimarisidir ama
+> metin SFT'si için **AutoProcessor gerekmez** — transformers'ta
+> `Qwen3_5ForCausalLM` görüntü kulesini (`^model.visual.*`) yok sayar, mevcut
+> `AutoModelForCausalLM` + `AutoTokenizer` yolu yeterlidir. Bugünkü gerçek kısıt
+> bellek değil **disktir**: 9B bf16 ≈18 GB, Kaggle'da 19,2 GB boş alan → ilk
+> gerçek koşu `configs/training_qwen3_5_4b_t4.yaml` (4B, ≈9,3 GB) ile yapılır.
+
 ## Eğitim
 
 ```bash
@@ -195,6 +223,28 @@ Dört karar verir: `SAĞLIKLI`, `DİKKAT`, `BOZUK` (NaN/ıraksama), `BAŞARISIZ`
 mekaniğini denetler** — model kalitesi hakkında hiçbir şey söylemez; kalite
 için `gokturk.evaluate` + insan incelemesi gerekir.
 
+### GitHub Actions ile mini adaptör (CPU, GPU yok)
+
+Boru hattını uçtan uca kanıtlayan küçük koşu; **GökTürk-Ultra'yı eğitmez**.
+
+```bash
+# Elle tetiklenir: Actions → "Mini adaptör (CPU)" → Run workflow
+# Secret'lar (yalnızca gerektiğinde):
+#   HF_TOKEN      → push_to_hub = true
+#   EVREN_API_KEY → check_evren  = true  (yalnızca --health-check, veri üretmez)
+
+# Aynı komutlar yerelde:
+python -m gokturk.train --config configs/training_mini_cpu.yaml \
+  --model Qwen/Qwen3-0.6B --cpu-ok --plan-only
+```
+
+Public depoda `ubuntu-latest` = 4 vCPU / 16 GB / **14 GB disk**, **GPU yok**;
+GitHub Pro bu tabloyu değiştirmez. Sonuç: ≤1B modelde 30–100 adım LoRA evet,
+9B adaptör hayır. `--cpu-ok`, "GPU yok" bulgusunu engelleyici olmaktan çıkarıp
+bilgiye indirir; `--skip-preflight` gibi engelleri sessizce yutmaz.
+
+[`docs/github-actions-mini-egitim.md`](docs/github-actions-mini-egitim.md)
+
 ## Veri inceleme akışı
 
 Öğretmen çıktısı otomatik olarak doğru sayılmaz:
@@ -208,6 +258,50 @@ python -m gokturk.data_quality --data data/processed/train.jsonl \
 İnceleme dosyasındaki her örnek **(D)** doğru / **(K)** kısmen / **(Y)** yanlış
 olarak işaretlenir. Hata oranı eşiği aşarsa ilgili istem şablonu düzeltilir ve o
 `template_version` ile üretilen veri atılır. Süreç: `docs/architecture.md` §4.
+
+## Yayınlama: Hugging Face ve GGUF
+
+```bash
+# 1) Plan (ağa çıkmaz): dosyalar, boyut, token var mı
+python -m gokturk.publish --adapter outputs/gokturk-run/adapter \
+  --repo-id kullanici/gokturk-ultra-lora
+
+# 2) Gerçek yükleme (özel depo; token yalnızca HF_TOKEN ortam değişkeninden)
+python -m gokturk.publish --adapter outputs/gokturk-run/adapter \
+  --repo-id kullanici/gokturk-ultra-lora --manifest outputs/gokturk-run/run_manifest.json --push
+
+# 3) GGUF mümkün mü? (makinenin gerçek RAM/disk sayılarıyla)
+python -m gokturk.publish --gguf-plan --adapter outputs/gokturk-run/adapter --quant mxfp4
+```
+
+- Yükleme **adaptörü** gönderir (~yüz MB), 42 GB'lık birleşik modeli değil.
+  Model kartı manifestten üretilir ve ölçülmemiş hiçbir başarı iddiası içermez.
+- **GGUF otomatik üretilmez.** LoRA birleştirmesi ≈42 GB bellek ister; Kaggle
+  ücretsiz katmanı (29 GB RAM, 20 GB disk) bunu kaldırmaz. Plan komutu bunu
+  sayılarla söyler; yeterli makinede 5 adımlık komut listesini basar.
+- gpt-oss'un doğal biçimi **MXFP4**'tür (uzmanlar zaten 4-bit). Q4_K_M
+  desteklenir ama bu modelde ikinci bir yuvarlama ekler; varsayılan MXFP4.
+- Ayrıntı: [`docs/yayinlama-ve-gguf.md`](docs/yayinlama-ve-gguf.md).
+
+### Birleştirmeden servis (dinamik LoRA)
+
+```bash
+# Dört yolu karşılaştır: peft / vllm-lora / llamacpp / merged
+python -m gokturk.serve --plan --base-model Qwen/Qwen3.5-9B --vram-gb 48
+
+# HF Space iskeleti: taban + adaptör, birleştirme yok
+python -m gokturk.serve --emit-space space/ \
+  --base-model Qwen/Qwen3.5-9B --adapter-repo kullanici/gokturk-ultra-lora
+```
+
+| Yol | Birleştirme | Nerede |
+| --- | --- | --- |
+| `peft` | hayır | Python / Space |
+| `vllm-lora` | hayır | GPU sunucusu (bnb tabanda dinamik desteklenmez) |
+| `llamacpp` | hayır | CPU; `convert_lora_to_gguf.py` taban ağırlığı istemez |
+| `merged` | **evet** | yalnızca tek dosya zorunluysa |
+
+[`docs/servis-ve-dinamik-lora.md`](docs/servis-ve-dinamik-lora.md)
 
 ## Değerlendirme
 
@@ -227,7 +321,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 252 test
+python -m pytest tests -q        # 367 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -239,12 +333,14 @@ yolu ise rastgele başlatılmış küçük bir modelle (CPU) doğrulanır.
 ```
 configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
-docs/        architecture.md, kaggle-rehberi.md
+docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md,
+             taban-model-secimi.md, servis-ve-dinamik-lora.md,
+             github-actions-mini-egitim.md, kaggle-gercek-kosus.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
-             train, evaluate, logcheck
-tests/       252 otomatik test
+             train, evaluate, logcheck, publish, serve
+tests/       367 otomatik test
 ```
 
 ## Lisans

@@ -96,6 +96,37 @@ _ERROR_RULES: list[tuple[str, str, str, str, str]] = [
         "Veri dosyasını küçültün, tokenizer/dataset örneklerini parça parça yükleyin.",
     ),
     (
+        r"Caught (?:\w+Error|\w+Exception) in replica \d+ on device \d+|"
+        r"torch/nn/parallel/data_parallel\.py|nn\.DataParallel",
+        "dataparallel-replica",
+        FAILED,
+        "Model iki GPU'ya kopyalanmaya çalışıldı (nn.DataParallel / 'replica 0') ve "
+        "kopya içinde çöktü. 4-bit (bitsandbytes) ağırlıklar çoğaltılamaz; bu repo "
+        "zaten model paralelliği uygulamıyor.",
+        "Tek kart gösterin: `CUDA_VISIBLE_DEVICES=0` (bu repoda `--gpus 0`, "
+        "varsayılan) veya notebook'ta ilk hücrede `os.environ['CUDA_VISIBLE_DEVICES']='0'`. "
+        "İkinci T4 bilinçli olarak kullanılmaz.",
+    ),
+    # Unsloth'un füzyonlu (fused) kayıp çekirdeği, kurulu torch/transformers
+    # sürümüyle uyuşmazsa ilk adımda patlar. Kullanıcı için tek anlamı var:
+    # veri/model hatası değil, çekirdek uyumsuzluğu → ya kapatılır ya da
+    # füzyonsuz yola geçilir.
+    (
+        r"grad_and_value\(f\)\(\*args\): Expected f\(\*args\) to return a scalar\s+Tensor"
+        r"|unsloth_fused_ce_loss|UnslothFusedLoss\.apply",
+        "unsloth-fused-loss",
+        FAILED,
+        "Unsloth'un füzyonlu kayıp (fused loss) çekirdeği bu torch/transformers "
+        "sürümüyle uyumsuz: kayıp skaler değil, 2 boyutlu tensör döndü. "
+        "Veri veya config hatası DEĞİL.",
+        "En hızlı çözüm: `--backend transformers` (Qwen3.5-4B için "
+        "configs/training_qwen3_5_4b_t4.yaml; 4B'de Unsloth gerekmez). "
+        "Unsloth'ta kalınacaksa: `import unsloth` satırından ÖNCE "
+        "os.environ['UNSLOTH_RETURN_LOGITS']='1' (bu repoda `--unsloth-plain-loss`) "
+        "veya TrainingArguments'ta average_tokens_across_devices=False; ayrıca "
+        "unsloth/unsloth_zoo'yu aynı sürüme sabitleyin.",
+    ),
+    (
         r"(?<![\d.])(?:HTTP\s*)?40[13](?![\d.])|Unauthorized|Forbidden|Invalid API key|"
         r"authentication (?:failed|error)",
         "auth",

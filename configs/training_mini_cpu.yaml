@@ -1,0 +1,79 @@
+# GökTürk-Ultra — MİNİ adaptör (CPU, GitHub Actions)
+# ---------------------------------------------------------------------------
+# BU NEDİR
+#   Boru hattını uçtan uca kanıtlayan küçük bir koşu: gerçek LoRA kaydeder,
+#   gerçek manifest üretir, adaptör-only GGUF'a çevrilebilir. Model KÜÇÜKTÜR
+#   (0.6B) ve veri 3-6 örnektir; buradan çıkan adaptör **GökTürk-Ultra değildir**
+#   ve hiçbir kalite iddiası taşımaz.
+#
+# NEDEN CPU
+#   GitHub-hosted runner'da GPU yok. Public depoda `ubuntu-latest` = 4 vCPU,
+#   16 GB RAM, 14 GB SSD ve ücretsiz. Bu, 0.6B'lik bir modelde 30 adımlık
+#   LoRA için yeterli; 9B/20B için değil (o Kaggle/EVREN HPC işi).
+#
+# ÖN DENETİM
+#   Workflow `--cpu-ok` kullanır: ön denetim "GPU yok" bulgusunu engelleyici
+#   değil bilgi olarak raporlar (kod: cpu-mini) ve koşu devam eder. Yani engel
+#   yutulmaz, adı konur. `require_preflight_ok: false` bu profilde ikinci,
+#   yapılandırma tarafındaki kapıyı da açar. Gerçek GPU profillerinde ikisi de
+#   kapalıdır.
+# ---------------------------------------------------------------------------
+
+model:
+  name_or_path: Qwen/Qwen3-0.6B
+  # CPU'da bf16 yok, fp16 yavaş/kararsız: fp32.
+  dtype: fp32
+  load_in_4bit: false      # bitsandbytes CPU'da yok
+  unsloth_4bit: false
+  trust_remote_code: false
+  attn_implementation: sdpa
+
+quantization:
+  method: nf4
+  double_quant: true
+  compute_dtype: fp32
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  bias: none
+
+data:
+  # Depoda izlenen örnek dosyalar: 3 pro + 6 basic kayıt. Amaç kapsama değil,
+  # boru hattının çalıştığını görmek.
+  train_file: data/samples/sample_pro.jsonl
+  eval_file: data/samples/sample_train.jsonl
+  max_seq_len: 512
+  prompt_field: prompt
+  response_field: response
+
+optimization:
+  method: lora
+  epochs: 1
+  max_steps: 30
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  gradient_checkpointing: false   # CPU'da yalnızca yavaşlatır
+  optim: adamw_torch              # bitsandbytes yok
+  seed: 3407
+  logging_steps: 1                # 30 adımda eğriyi görebilmek için
+  save_steps: 30
+  save_total_limit: 1
+  eval_steps: 30
+  report_to: none
+
+output_dir: outputs/mini-cpu-lora
+# CPU runner'da "GPU yok" engelleyici bulgusu beklenir (bkz. dosya başı).
+require_preflight_ok: false
+allow_unverified_hardware: false
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+peft: true

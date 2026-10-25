@@ -1,0 +1,223 @@
+name: Mini adaptör (CPU)
+
+# Küçük bir taban modelde gerçek bir LoRA eğitir ve isteğe bağlı olarak
+# adaptör-only GGUF üretir. Amaç: boru hattını uçtan uca kanıtlamak.
+# GPU YOK: bu iş 9B/20B eğitmez, "GökTürk-Ultra" üretmez.
+#
+# Gerekli secret'lar (Settings > Secrets and variables > Actions):
+#   HF_TOKEN      -> yalnızca push_to_hub = true ise gerekir (yazma izinli token)
+#   EVREN_API_KEY -> yalnızca veri üretimi yapılacaksa (bu workflow üretmez)
+# Secret'lar yalnızca env olarak geçirilir; hiçbir adımda yazdırılmaz.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_model:
+        description: "Taban model (küçük olmalı; CPU'da eğitilir)"
+        type: string
+        default: "Qwen/Qwen3-0.6B"
+      max_steps:
+        description: "Eğitim adımı (30-100 arası önerilir)"
+        type: string
+        default: "30"
+      train_file:
+        description: "Eğitim JSONL"
+        type: string
+        default: "data/samples/sample_pro.jsonl"
+      eval_file:
+        description: "Değerlendirme JSONL"
+        type: string
+        default: "data/samples/sample_train.jsonl"
+      build_gguf_lora:
+        description: "Adaptör-only GGUF üret (llama.cpp convert_lora_to_gguf.py)"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+      push_to_hub:
+        description: "Adaptörü Hugging Face'e yükle (HF_TOKEN gerekir)"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+      adapter_repo:
+        description: "Hedef HF deposu (push_to_hub = true ise)"
+        type: string
+        default: ""
+      check_evren:
+        description: "EVREN bağlantısını doğrula (EVREN_API_KEY gerekir)"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mini-adapter-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  HF_HOME: ${{ github.workspace }}/.hf-cache
+  TRANSFORMERS_NO_ADVISORY_WARNINGS: "1"
+  TOKENIZERS_PARALLELISM: "false"
+
+jobs:
+  evren:
+    name: EVREN bağlantı kontrolü
+    if: ${{ inputs.check_evren == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Kurulum (torch gerekmez)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Sağlayıcı ayakta mı?
+        env:
+          EVREN_API_KEY: ${{ secrets.EVREN_API_KEY }}
+        run: |
+          set -o pipefail
+          if [ -z "${EVREN_API_KEY:-}" ]; then
+            echo "::error::EVREN_API_KEY secret'ı yok. Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          # Yalnızca bağlantı + anahtar doğrulanır; veri üretilmez, ücret oluşmaz.
+          python -m gokturk.data_generation --teachers-config configs/teachers.yaml \
+            --health-check 2>&1 | tee /tmp/evren-health.log
+
+  mini:
+    name: Mini LoRA eğitimi (CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Donanım ve disk (dürüstlük için ekrana basılır)
+        run: |
+          nproc
+          free -h
+          df -h /
+          echo "GPU: $(command -v nvidia-smi >/dev/null && echo var || echo yok)"
+
+      - name: Bağımlılıklar (CPU torch)
+        run: |
+          python -m pip install --upgrade pip
+          # ÖNEMLİ: önce CPU tekerleği kurulur; ardından `.[train]` kurulunca
+          # pip torch>=2.1 gereksinimini karşılanmış görür ve CUDA tekerleğini
+          # (≈2.5 GB) indirmez. 14 GB disk için bu şart.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[train,dev]"
+
+      - name: Statik kontrol
+        run: ruff check src tests
+
+      - name: Ön denetim + plan (GPU yokluğu burada açıkça raporlanır)
+        run: |
+          python -m gokturk.train --config configs/training_mini_cpu.yaml \
+            --model "${{ inputs.base_model }}" --cpu-ok --plan-only | tee /tmp/plan.txt
+
+      - name: Mini eğitim
+        run: |
+          set -o pipefail
+          python -m gokturk.train \
+            --config configs/training_mini_cpu.yaml \
+            --model "${{ inputs.base_model }}" \
+            --train-file "${{ inputs.train_file }}" \
+            --eval-file "${{ inputs.eval_file }}" \
+            --max-steps "${{ inputs.max_steps }}" \
+            --output-dir outputs/mini \
+            --cpu-ok 2>&1 | tee /tmp/train.log
+
+      - name: Eğitim logunu denetle (gokturk.logcheck)
+        run: |
+          python -m gokturk.logcheck --manifest outputs/mini/run_manifest.json \
+            --fail-on broken | tee /tmp/logcheck.txt
+
+      - name: Adaptörü GGUF LoRA'ya çevir (birleştirme YOK)
+        if: ${{ inputs.build_gguf_lora == 'true' }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp llama.cpp
+          # convert_lora_to_gguf.py saf Python'dur; cmake derlemesi gerekmez.
+          #
+          # llama.cpp/requirements.txt BİLEREK kurulmaz: torch==2.11.0'ı PyPI'dan
+          # ister ve CUDA tekerleğini (≈2,5 GB + nvidia bağımlılıkları) 14 GB'lık
+          # runner diskine çekebilir. Dönüştürücü yalnızca torch, transformers,
+          # safetensors ve gguf ister; ilk üçü zaten kurulu.
+          pip install gguf
+          # --base bir DİZİN bekler; HF kimliği için --base-model-id kullanılır.
+          # Adapter_config.json zaten taban kimliğini taşır, bu bayrak onu sabitler.
+          if ! grep -q -- "--base-model-id" llama.cpp/convert_lora_to_gguf.py; then
+            echo "::error::llama.cpp dönüştürücüsünde --base-model-id yok; sürüm değişmiş olabilir."
+            exit 1
+          fi
+          python llama.cpp/convert_lora_to_gguf.py \
+            outputs/mini/adapter \
+            --base-model-id "${{ inputs.base_model }}" \
+            --outfile outputs/mini/gokturk-mini-lora.gguf \
+            --outtype f16
+          ls -lh outputs/mini/gokturk-mini-lora.gguf
+
+      - name: Hugging Face'e yükle (isteğe bağlı)
+        if: ${{ inputs.push_to_hub == 'true' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "::error::push_to_hub=true ama HF_TOKEN secret'ı yok. Settings > Secrets > Actions."
+            exit 1
+          fi
+          if [ -z "${{ inputs.adapter_repo }}" ]; then
+            echo "::error::adapter_repo boş. 'kullanici/depo' biçiminde verin."
+            exit 1
+          fi
+          python -m gokturk.publish \
+            --adapter outputs/mini/adapter \
+            --repo-id "${{ inputs.adapter_repo }}" \
+            --manifest outputs/mini/run_manifest.json \
+            --base-model "${{ inputs.base_model }}" \
+            --push
+
+      - name: Artefaktları topla
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mini-adapter-${{ github.run_number }}
+          path: |
+            outputs/mini/adapter/**
+            outputs/mini/run_manifest.json
+            outputs/mini/*.gguf
+            /tmp/train.log
+            /tmp/logcheck.txt
+            /tmp/plan.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Özet
+        if: always()
+        run: |
+          {
+            echo "## Mini adaptör koşusu"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Taban | \`${{ inputs.base_model }}\` |"
+            echo "| Adım | ${{ inputs.max_steps }} |"
+            echo "| Donanım | GitHub runner, **GPU yok** |"
+            echo "| HF push | ${{ inputs.push_to_hub }} |"
+            echo "| GGUF LoRA | ${{ inputs.build_gguf_lora }} |"
+            echo ""
+            echo "> Bu adaptör **GökTürk-Ultra değildir**: küçük bir taban model ve"
+            echo "> birkaç örnekle yapılan bir boru hattı kanıtıdır. Kalite iddiası yoktur."
+          } >> "$GITHUB_STEP_SUMMARY"
