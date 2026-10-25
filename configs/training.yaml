@@ -1,0 +1,74 @@
+# Eğitim yapılandırması — GökTürk-Ultra
+# ---------------------------------------------------------------------------
+# Buradaki ayarlar DOĞRULANABİLİR olacak şekilde açık yazılmıştır. Eğitim
+# betiği (`python -m gokturk.train`) önce donanımı ve mimariyi denetler;
+# desteklenmeyen bir birleşimde eğitim BAŞLAMAZ.
+#
+# Bilinen gerçek (kaynak: OpenAI gpt-oss model kartı, Unsloth belgeleri):
+#   * gpt-oss-20b: 21B toplam / 3.6B aktif parametre, MoE, ağırlıklar MXFP4.
+#   * Yerel MXFP4 ile gradyan eğitimi ana akım kütüphanelerde desteklenmez;
+#     eğitim için bf16/fp16'ya yükseltme gerekir (≈42 GB sadece ağırlıklar).
+#   * bf16 LoRA ≈44 GB VRAM; Unsloth'un özel 4-bit QLoRA yolu ≈14 GB.
+#   * Kaggle ücretsiz katmanı: 2× Tesla T4 = 2×16 GB, oturum başına 12 saat,
+#     haftada ~30 GPU saati. T4 bf16 desteklemez (compute 7.5).
+#
+# SONUÇ: aşağıdaki `qlora` + openai/gpt-oss-20b birleşimi 2×T4 üzerinde
+# ÇALIŞMAZ ve `gokturk.env_check` bunu engelleyici bulgu olarak raporlar.
+# Bu yapılandırma gerçek bir eğitim koşusu için referanstır; T4 üzerinde
+# altyapıyı doğrulamak için `python -m gokturk.train --smoke` kullanın.
+# ---------------------------------------------------------------------------
+
+model:
+  name_or_path: openai/gpt-oss-20b
+  dtype: auto            # auto -> bf16 destekleniyorsa bf16, değilse fp16
+  load_in_4bit: true     # QLoRA için gerekli (bitsandbytes, yalnızca CUDA)
+  unsloth_4bit: false    # bu repoda uygulanmıyor; açılırsa yapılandırma hatası verir
+  trust_remote_code: false
+  attn_implementation: sdpa
+
+quantization:
+  method: nf4
+  double_quant: true
+  compute_dtype: auto
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: ["auto"]   # yüklenen mimariden çözümlenir
+  bias: none
+
+data:
+  train_file: data/processed/train.jsonl
+  eval_file: data/processed/valid.jsonl
+  max_seq_len: 1024
+  prompt_field: prompt
+  response_field: response
+
+optimization:
+  method: qlora          # full | lora | qlora
+  epochs: 1
+  max_steps: -1
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 0.0001
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  gradient_checkpointing: true
+  optim: paged_adamw_8bit
+  seed: 42
+  logging_steps: 5
+  save_steps: 100
+  save_total_limit: 2
+  eval_steps: 100
+  report_to: none
+
+output_dir: outputs/gokturk-qlora-v1
+require_preflight_ok: true
+allow_unverified_hardware: false
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+peft: true

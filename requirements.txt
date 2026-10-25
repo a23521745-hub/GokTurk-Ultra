@@ -1,0 +1,18 @@
+# Temel gereksinimler: veri hattı + değerlendirme
+# (torch/transformers olmadan da veri üretimi, kalite kontrolü ve skorlama çalışır)
+pyyaml>=6.0
+
+# --- Eğitim için (opsiyonel, ağır) ---------------------------------------
+# GPU/CUDA ortamında kurulmalıdır. Kaggle imajında torch genellikle hazırdır.
+# torch>=2.1
+# transformers>=4.55,<6      # gpt-oss mimarisi (GptOssForCausalLM) için >=4.55
+# peft>=0.12                 # LoRA / QLoRA
+# accelerate>=0.33
+# tokenizers>=0.19
+
+# --- QLoRA (4-bit NF4, yalnızca CUDA) ------------------------------------
+# bitsandbytes>=0.43
+
+# --- Geliştirme -----------------------------------------------------------
+pytest>=7.4
+ruff>=0.5

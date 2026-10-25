@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gokturk-ultra"
+version = "0.1.0"
+description = "GökTürk-Ultra: Türkçe LLM veri üretimi, eğitim ve değerlendirme altyapısı"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "GökTürk-Ultra contributors" }]
+keywords = ["llm", "turkish", "lora", "qlora", "evaluation", "data-quality"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core: data pipeline and evaluation work without any ML stack.
+dependencies = ["pyyaml>=6.0"]
+
+[project.optional-dependencies]
+train = [
+  "torch>=2.1",
+  "transformers>=4.55,<6",
+  "peft>=0.12",
+  "accelerate>=0.33",
+  "tokenizers>=0.19",
+]
+qlora = ["bitsandbytes>=0.43"]
+dev = ["pytest>=7.4", "ruff>=0.5"]
+
+[project.scripts]
+gokturk-generate = "gokturk.data_generation:main"
+gokturk-train = "gokturk.train:main"
+gokturk-eval = "gokturk.evaluate:main"
+gokturk-doctor = "gokturk.env_check:main"
+gokturk-quality = "gokturk.data_quality:main"
+
+[project.urls]
+Homepage = "https://github.com/a23521745-hub/GokTurk-Ultra"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gokturk = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["slow: daha uzun süren entegrasyon testleri"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
