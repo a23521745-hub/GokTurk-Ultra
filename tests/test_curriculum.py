@@ -74,7 +74,7 @@ def test_plan_target_validation():
 def test_plan_never_contains_model_ids():
     plan = build_plan(20, seed=1)
     dumped = json.dumps(plan.to_dict()).lower()
-    for token in ("gpt", "kimi", "mimo", "http"):
+    for token in ("gpt", "glm", "mimo", "http"):
         assert token not in dumped
 
 

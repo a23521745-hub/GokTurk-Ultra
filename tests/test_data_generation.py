@@ -94,7 +94,7 @@ def test_parse_draft(text, expected):
 def test_record_id_is_deterministic():
     a = make_record_id("seed-1", "mimo", 0, "coding")
     b = make_record_id("seed-1", "mimo", 0, "coding")
-    c = make_record_id("seed-1", "kimi", 0, "coding")
+    c = make_record_id("seed-1", "glm", 0, "coding")
     assert a == b != c
     assert a.startswith("gtu-cod-")
 

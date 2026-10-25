@@ -69,7 +69,7 @@ yapıp tam koşuya geçilir.
    - **Accelerator → GPU T4 x2** ← bu olmadan eğitim olmaz
    - **Internet → On** ← bu olmadan `pip install` olmaz
 4. **Add-ons → Secrets → Add a new secret**, dört tane ekleyin:
-   `EVREN_API_KEY`, `EVREN_BASE_URL`, `EVREN_MODEL_MIMO`, `EVREN_MODEL_KIMI`.
+   `EVREN_API_KEY`, `EVREN_BASE_URL`, `EVREN_MODEL_MIMO`, `EVREN_MODEL_GLM`.
    Her birinin yanındaki **"Attach"** düğmesine basın (bu adım atlanırsa
    defter anahtarı görmez).
 5. Veri dosyanızı **Datasets → New Dataset** ile yükleyin. Adı ne olursa olsun,

@@ -8,7 +8,7 @@ Contract
 * Only an OpenAI-compatible chat-completions wire format is implemented
   (``POST {base_url}/chat/completions``). EVREN's public documentation
   describes an OpenAI-compatible inference layer, but the concrete model ids
-  and base URL for Kimi / MiMo must be verified by the operator against the
+  and base URL for GLM / MiMo must be verified by the operator against the
   provider's own model list before use -- this module never guesses them.
 * Transport failures are classified. Retryable failures (429, 5xx, timeouts,
   empty bodies) are retried with exponential backoff and jitter. Fatal

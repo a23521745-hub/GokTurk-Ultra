@@ -192,7 +192,7 @@ def test_pool_reports_provider_state(provider, monkeypatch, teachers_config):
     report = pool.health_check()
     assert report["provider"] == "test"
     assert report["key_present"] is True
-    assert set(report["teachers"]) == {"mimo", "kimi"}
+    assert set(report["teachers"]) == {"mimo", "glm"}
     assert report["ok"] is True
 
 

@@ -43,8 +43,13 @@ teachers:
     max_tokens: 2048
 
   # Öğretmen 2 — kodlama, hata ayıklama ve araç çağırma görevleri
-  - name: kimi-k3
-    model: "env:EVREN_MODEL_KIMI"
+  # NOT: Bu rolde başlangıçta Kimi-K3 planlanmıştı; EVREN'in model listesinde
+  # Kimi bulunmadığı için (operatör bilgisi, 2026-10) GLM-5.3 ile
+  # değiştirilmiştir. Kodlama/ajan yetenekleri bu rolün gereksinimini karşılar.
+  # `env:EVREN_MODEL_GLM` değeri EVREN'in KENDİ model listesindeki kimlikle
+  # doldurulmalıdır; bu repoda tahmin edilmez.
+  - name: glm-53
+    model: "env:EVREN_MODEL_GLM"
     role: "code,general"
     weight: 1.0
     temperature: 0.7

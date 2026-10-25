@@ -110,7 +110,7 @@ otomatik ölçülmez — insan incelemesi zorunludur (`docs/architecture.md` §4
 
 ```bash
 cp .env.example .env        # .env git tarafından izlenmez
-# .env içine EVREN_API_KEY, EVREN_BASE_URL, EVREN_MODEL_MIMO, EVREN_MODEL_KIMI yazın
+# .env içine EVREN_API_KEY, EVREN_BASE_URL, EVREN_MODEL_MIMO, EVREN_MODEL_GLM yazın
 set -a && source .env && set +a
 
 python -m gokturk.data_generation --dry-run          # plan; ağa çıkmaz
@@ -221,7 +221,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 238 test
+python -m pytest tests -q        # 241 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -238,7 +238,7 @@ notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
              train, evaluate, logcheck
-tests/       238 otomatik test
+tests/       241 otomatik test
 ```
 
 ## Lisans

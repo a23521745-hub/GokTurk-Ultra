@@ -108,7 +108,7 @@ def teachers_config(provider: ProviderConfig) -> TeachersConfig:
         provider=provider,
         teachers=[
             {"name": "mimo", "model": "mimo-test", "weight": 1.0, "temperature": 0.1},
-            {"name": "kimi", "model": "kimi-test", "weight": 1.0, "temperature": 0.2},
+            {"name": "glm", "model": "glm-test", "weight": 1.0, "temperature": 0.2},
         ],
     )
     cfg.validate()

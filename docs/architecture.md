@@ -240,8 +240,9 @@ regresyon yakalamak için bir duman göstergesidir.
 
 1. Gerçek öğretmen uç noktası/model kimlikleri doğrulanmadı; yapılandırma
    `env:` referanslarıyla boş bırakıldı. EVREN'in OpenAI-uyumlu olduğu
-   belgelenmiş olsa da, Kimi/MiMo kimlikleri sağlayıcının listesinden
-   doğrulanmalı.
+   belgelenmiş olsa da, GLM/MiMo kimlikleri sağlayıcının listesinden
+   doğrulanmalı. (Öğretmen 2 Kimi-K3'ten GLM-5.3'e taşındı: EVREN'de Kimi
+   bulunmuyor.)
 2. Üretim tek iş parçacıklı ve sıralıdır; PRO modunda örnek başına 3–4 çağrı
    yapıldığından 10.000 örnek ≈30–40 bin çağrı demektir ve oran sınırına bağlı
    olarak saatler sürer. Paralelleştirme eklenmedi (bilinçli: sıralı akış

@@ -41,6 +41,25 @@ def test_repo_configs_are_valid():
         teachers.require_ready()
 
 
+def test_repo_teachers_are_mimo_and_glm():
+    """The shipped teacher pair is MiMo-V2.6-Pro + GLM-5.3.
+
+    Kimi was dropped because EVREN does not serve it (operator info, 2026-10).
+    This test exists so the swap cannot silently regress.
+    """
+    teachers = load_teachers_config(ROOT / "configs" / "teachers.yaml")
+    names = [t.name for t in teachers.models()]
+    assert names == ["mimo-v26-pro", "glm-53"]
+
+    roles = {t.name: t.roles() for t in teachers.models()}
+    assert "code" in roles["glm-53"], "GLM must cover the coding teacher role"
+    assert "reasoning" in roles["mimo-v26-pro"]
+
+    raw = (ROOT / "configs" / "teachers.yaml").read_text(encoding="utf-8")
+    assert "EVREN_MODEL_KIMI" not in raw
+    assert "env:EVREN_MODEL_GLM" in raw
+
+
 def test_teacher_config_rejects_guessed_model_id(tmp_path: Path):
     path = _write(
         tmp_path,
