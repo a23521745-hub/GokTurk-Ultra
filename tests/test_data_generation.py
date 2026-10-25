@@ -220,6 +220,22 @@ def test_cli_dry_run_works_without_credentials(tmp_path: Path, monkeypatch, caps
     assert "EVREN_API_KEY" in captured.err
 
 
+def test_cli_list_models_requires_key(tmp_path: Path, monkeypatch, capsys):
+    monkeypatch.delenv("EVREN_API_KEY", raising=False)
+    code = main(
+        [
+            "--teachers-config",
+            str(ROOT / "configs" / "teachers.yaml"),
+            "--seeds",
+            str(ROOT / "data" / "seeds" / "turkish_seed_tasks.jsonl"),
+            "--list-models",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 3
+    assert "EVREN_API_KEY" in captured.err
+
+
 def test_cli_refuses_to_generate_without_key(tmp_path: Path, monkeypatch, capsys):
     monkeypatch.delenv("EVREN_API_KEY", raising=False)
     code = main(

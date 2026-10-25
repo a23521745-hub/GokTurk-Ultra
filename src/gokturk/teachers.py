@@ -153,11 +153,13 @@ class TeacherClient:
         provider: ProviderConfig,
         *,
         transport=None,
+        transport_get=None,
         sleep=time.sleep,
         jitter: random.Random | None = None,
     ) -> None:
         self.provider = provider
         self._transport = transport or self._http_post_json
+        self._get_transport = transport_get or self._http_get_json
         self._sleep = sleep
         self._rng = jitter or random.Random(0)
         self._limiter = RateLimiter(provider.requests_per_minute)
@@ -200,6 +202,28 @@ class TeacherClient:
             "ok": bool(resp.text.strip()),
             "detail": f"model={resp.model} latency={resp.latency_s:.2f}s",
         }
+
+    def list_models(self, *, timeout: float | None = None) -> list[str]:
+        """Return the model ids the provider itself advertises (``GET /models``).
+
+        This is the only supported way to learn a model id: the caller reads
+        what the server reports instead of trusting a hard-coded guess. Raises
+        :class:`TeacherConfigError` when the configuration or the key is
+        missing, and the usual HTTP taxonomy otherwise.
+        """
+        provider = self.provider
+        if not provider.base_url:
+            raise TeacherConfigError(
+                "provider.base_url is empty: cannot list models without an endpoint."
+            )
+        try:
+            api_key = provider.require_api_key()
+        except ConfigError as exc:
+            raise TeacherConfigError(str(exc)) from exc
+        url = provider.base_url.rstrip("/") + "/models"
+        self._limiter.wait()
+        raw = self._get_transport(url, api_key, timeout or provider.timeout_s)
+        return _extract_model_ids(raw)
 
     def chat(
         self,
@@ -320,6 +344,39 @@ class TeacherClient:
             raise TeacherEmptyResponseError("response JSON is not an object")
         return parsed
 
+    def _http_get_json(
+        self, url: str, api_key: str, timeout: float
+    ) -> dict[str, Any]:
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("Accept", "application/json")
+        req.add_header("Authorization", f"Bearer {api_key}")
+        req.add_header("User-Agent", _USER_AGENT)
+        for k, v in self.provider.extra_headers.items():
+            req.add_header(k, v)
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:  # pragma: no cover - body may be unreadable
+                pass
+            raise _classify_http_error(exc.code, body) from exc
+        except TimeoutError as exc:
+            raise TeacherTimeoutError(f"timeout after {timeout}s: {exc}") from exc
+        except urllib.error.URLError as exc:
+            raise TeacherTimeoutError(f"connection error: {exc.reason}") from exc
+
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise TeacherEmptyResponseError(
+                f"/models response was not valid JSON ({len(body)} bytes)"
+            ) from exc
+        return parsed if isinstance(parsed, dict) else {"data": parsed}
+
     @staticmethod
     def _extract_content(
         raw: Mapping[str, Any], model: str
@@ -363,6 +420,37 @@ def _classify_http_error(status: int, body: str) -> TeacherError:
     if status in (408, 504):
         return TeacherTimeoutError(f"HTTP {status}: gateway timeout. {snippet}")
     return TeacherRequestError(f"HTTP {status}: request rejected. {snippet}")
+
+
+def _extract_model_ids(raw: Mapping[str, Any]) -> list[str]:
+    """Pull model ids out of an OpenAI-style ``/models`` payload.
+
+    Accepts ``{"data": [{"id": ...}]}`` (the documented shape), a bare list of
+    strings, and the ``{"models": [...]}`` variant some gateways return. Ids
+    are returned in server order with duplicates removed.
+    """
+    items = raw.get("data")
+    if items is None:
+        items = raw.get("models")
+    if not isinstance(items, list):
+        raise TeacherEmptyResponseError(
+            "unexpected /models payload: expected a 'data' or 'models' list"
+        )
+    ids: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            candidate = item
+        elif isinstance(item, Mapping):
+            candidate = item.get("id") or item.get("name") or item.get("model")
+        else:
+            candidate = None
+        if isinstance(candidate, str) and candidate.strip():
+            name = candidate.strip()
+            if name not in ids:
+                ids.append(name)
+    if not ids:
+        raise TeacherEmptyResponseError("/models returned no usable model ids")
+    return ids
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +508,29 @@ class TeacherPool:
             report["teachers"][m.name] = self.client.health_check(m.model)
         report["ok"] = all(v.get("ok") for v in report["teachers"].values())
         return report
+
+    def list_models(self) -> dict[str, Any]:
+        """Compare the configured teacher ids with the provider's own list.
+
+        Returns ``available`` (server order), per-teacher ``configured`` /
+        ``present`` flags and ``missing`` ids. One request, no generation.
+        """
+        available = self.client.list_models()
+        configured = {
+            m.name: {"model": m.model, "present": m.model in available}
+            for m in self.models
+        }
+        missing = sorted(
+            {entry["model"] for entry in configured.values() if not entry["present"]}
+        )
+        return {
+            "provider": self.config.provider.name,
+            "base_url": self.config.provider.base_url,
+            "available": available,
+            "configured": configured,
+            "missing": missing,
+            "ok": not missing,
+        }
 
     def ask(
         self,

@@ -203,6 +203,7 @@ class _Handler(BaseHTTPRequestHandler):
     status_plan: list = []
     received: list = []
     delay_s: float = 0.0
+    models_payload: dict = {"data": [{"id": "mimo-test"}, {"id": "glm-test"}]}
 
     def do_POST(self):  # noqa: N802
         if type(self).delay_s:
@@ -228,6 +229,21 @@ class _Handler(BaseHTTPRequestHandler):
             # The timeout test intentionally abandons the connection.
             pass
 
+    def do_GET(self):  # noqa: N802
+        type(self).received.append(
+            {"path": self.path, "auth": self.headers.get("Authorization")}
+        )
+        status = type(self).status_plan.pop(0) if type(self).status_plan else 200
+        if status == 401:
+            payload = json.dumps({"error": {"message": "API anahtarı eksik"}}).encode()
+        else:
+            payload = json.dumps(type(self).models_payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def log_message(self, *args):  # silence test output
         return
 
@@ -237,6 +253,7 @@ def http_server():
     _Handler.status_plan = []
     _Handler.received = []
     _Handler.delay_s = 0.0
+    _Handler.models_payload = {"data": [{"id": "mimo-test"}, {"id": "glm-test"}]}
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -302,3 +319,74 @@ def test_real_http_timeout(http_server, monkeypatch):
     with pytest.raises(TeacherUnavailableError) as excinfo:
         client.chat("m", messages=[{"role": "user", "content": "selam"}], max_attempts=1)
     assert "TeacherTimeoutError" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# GET /models -- the only supported way to learn a model id
+# ---------------------------------------------------------------------------
+def test_list_models_reads_provider_list(http_server, monkeypatch):
+    base_url, handler = http_server
+    monkeypatch.setenv("GTU_HTTP_KEY", "test-key-value")
+    provider = ProviderConfig(base_url=base_url, api_key_env="GTU_HTTP_KEY", timeout_s=5)
+    ids = TeacherClient(provider).list_models()
+    assert ids == ["mimo-test", "glm-test"]
+    assert handler.received[0]["path"] == "/v1/models"
+    assert handler.received[0]["auth"] == "Bearer test-key-value"
+
+
+def test_list_models_401_is_auth_error(http_server, monkeypatch):
+    base_url, handler = http_server
+    handler.status_plan = [401]
+    monkeypatch.setenv("GTU_HTTP_KEY", "bad")
+    provider = ProviderConfig(base_url=base_url, api_key_env="GTU_HTTP_KEY", timeout_s=5)
+    with pytest.raises(TeacherAuthError):
+        TeacherClient(provider).list_models()
+
+
+def test_list_models_without_key_sends_no_request(provider, monkeypatch):
+    monkeypatch.delenv(provider.api_key_env, raising=False)
+    client, transport, _ = _client(provider, [])
+    with pytest.raises(TeacherConfigError, match=provider.api_key_env):
+        client.list_models()
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"data": [{"id": "a"}, {"id": "b"}]}, ["a", "b"]),
+        ({"models": ["a", "b"]}, ["a", "b"]),
+        ({"data": [{"name": "a"}, {"model": "b"}]}, ["a", "b"]),
+        ({"data": [{"id": "a"}, {"id": "a"}]}, ["a"]),
+        ({"data": ["a", " "], "models": ["zzz"]}, ["a"]),
+    ],
+)
+def test_extract_model_ids_shapes(payload, expected):
+    from gokturk.teachers import _extract_model_ids
+
+    assert _extract_model_ids(payload) == expected
+
+
+def test_extract_model_ids_rejects_unusable_payload():
+    from gokturk.teachers import _extract_model_ids
+
+    with pytest.raises(TeacherEmptyResponseError):
+        _extract_model_ids({"object": "list"})
+    with pytest.raises(TeacherEmptyResponseError):
+        _extract_model_ids({"data": []})
+
+
+def test_pool_list_models_flags_missing_ids(teachers_config, http_server, monkeypatch):
+    base_url, handler = http_server
+    monkeypatch.setenv("GTU_HTTP_KEY", "k")
+    teachers_config.provider.base_url = base_url
+    teachers_config.provider.api_key_env = "GTU_HTTP_KEY"
+    report = TeacherPool(teachers_config).list_models()
+    assert report["ok"] is True
+    assert report["missing"] == []
+    assert report["configured"]["glm"]["present"] is True
+
+    handler.models_payload = {"data": [{"id": "mimo-test"}]}
+    report = TeacherPool(teachers_config).list_models()
+    assert report["ok"] is False
+    assert report["missing"] == ["glm-test"]

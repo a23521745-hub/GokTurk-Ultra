@@ -1,13 +1,20 @@
 # Öğretmen model yapılandırması (sentetik veri üretimi)
 # ---------------------------------------------------------------------------
-# ÖNEMLİ — bu dosya tek başına çalışmaz, doğrulanmış bilgi bekler:
-#
-#   * `base_url` ve `model` alanları SAĞLAYICININ KENDİ BELGESİNDEN
-#     kopyalanmalıdır. Bu repoda hiçbir endpoint veya model kimliği
-#     uydurulmamıştır.
-#   * Değerler `env:DEGISKEN_ADI` biçiminde verilebilir; böylece doğrulanmış
-#     adres/kimlik repoya yazılmadan kullanılır. Değişken tanımlı değilse
-#     veri üretimi ağa çıkmadan durur (`--dry-run` yalnızca planı yazdırır).
+# `base_url` ve `model` alanları SAĞLAYICININ KENDİ BELGESİNDEN alınmıştır;
+# hiçbir adres veya model kimliği tahmin edilmemiştir. Doğrulama kaydı:
+#   * https://evren-llmapi.ssyz.org.tr/v1 — 2026-10-25 tarihli kimliksiz GET,
+#     sağlayıcının kendi {"error": {"message": "API anahtarı eksik"}} yanıtını
+#     döndürdü (yani uç nokta canlı ve OpenAI uyumlu).
+#   * `glm-5.3` ve `mimo-v2.6-pro` — EVREN'in kendi model filosu sayfasında
+#     (https://evren.ssyz.org.tr/llm-inference) "Çevrimiçi" olarak listeleniyor
+#     ve bağımsız EVREN istemcilerinin model listelerinde aynı kimliklerle
+#     geçiyor. Tarih: 2026-10-25.
+#   * Kimlikler değişirse tahmin etmeyin: `python -m gokturk.data_generation
+#     --list-models` sağlayıcının /models listesini alır ve buradaki
+#     kimliklerle karşılaştırır.
+#   * Her alan `env:DEGISKEN_ADI` biçiminde de yazılabilir (ör. geçici olarak
+#     başka bir modele yönlendirmek için); değişken tanımlı değilse üretim
+#     ağa çıkmadan durur.
 #   * API anahtarı burada YOKTUR. Yalnızca anahtarın okunacağı ortam
 #     değişkeninin adı yazılır (`api_key_env`). Anahtarı asla dosyaya,
 #     notebook'a, loga veya commit'e koymayın.
@@ -15,9 +22,8 @@
 
 provider:
   name: ssyz-evren
-  # EVREN'in OpenAI uyumlu taban adresi (örnek biçim: https://<host>/v1).
-  # Doğrulandıktan sonra doğrudan yazılabilir veya ortam değişkeninden okunur.
-  base_url: "env:EVREN_BASE_URL"
+  # EVREN'in OpenAI uyumlu taban adresi (2026-10-25'te doğrulandı).
+  base_url: "https://evren-llmapi.ssyz.org.tr/v1"
   api_style: openai-chat
   api_key_env: EVREN_API_KEY
   timeout_s: 180
@@ -35,7 +41,7 @@ teachers:
   # NOT: `role` yalnızca YÖNLENDİRME ipucudur; model kimliği ve yetenekleri
   # sağlayıcının belgesinden doğrulanmalıdır. Roller: general | reasoning | code
   - name: mimo-v26-pro
-    model: "env:EVREN_MODEL_MIMO"
+    model: "mimo-v2.6-pro"
     role: "reasoning,general"
     weight: 1.0
     temperature: 0.6
@@ -46,10 +52,8 @@ teachers:
   # NOT: Bu rolde başlangıçta Kimi-K3 planlanmıştı; EVREN'in model listesinde
   # Kimi bulunmadığı için (operatör bilgisi, 2026-10) GLM-5.3 ile
   # değiştirilmiştir. Kodlama/ajan yetenekleri bu rolün gereksinimini karşılar.
-  # `env:EVREN_MODEL_GLM` değeri EVREN'in KENDİ model listesindeki kimlikle
-  # doldurulmalıdır; bu repoda tahmin edilmez.
   - name: glm-53
-    model: "env:EVREN_MODEL_GLM"
+    model: "glm-5.3"
     role: "code,general"
     weight: 1.0
     temperature: 0.7

@@ -110,18 +110,24 @@ otomatik ölçülmez — insan incelemesi zorunludur (`docs/architecture.md` §4
 
 ```bash
 cp .env.example .env        # .env git tarafından izlenmez
-# .env içine EVREN_API_KEY, EVREN_BASE_URL, EVREN_MODEL_MIMO, EVREN_MODEL_GLM yazın
+# .env içine yalnızca EVREN_API_KEY yazın (adres ve model kimlikleri
+# configs/teachers.yaml içinde doğrulanmış olarak hazır)
 set -a && source .env && set +a
 
 python -m gokturk.data_generation --dry-run          # plan; ağa çıkmaz
+python -m gokturk.data_generation --list-models      # sağlayıcının /models listesi
 python -m gokturk.data_generation --health-check     # bağlantı + model kimliği doğrulaması
 python -m gokturk.data_generation --per-seed 1 \
   --out data/raw/generated.jsonl
 ```
 
-- `configs/teachers.yaml` içindeki `base_url` ve model kimlikleri
-  **kasten boştur** (`env:...` referansı). Sağlayıcının kendi belgesinden
-  doğrulanmadan doldurulmaz; kod hiçbir adresi uydurmaz.
+- Öğretmen çifti: **MiMo-V2.6-Pro** (`mimo-v2.6-pro`, akıl yürütme/genel) +
+  **GLM-5.3** (`glm-5.3`, kod/araç çağırma). Kimi-K3 elendi: EVREN filosunda
+  Kimi yok.
+- `configs/teachers.yaml` içindeki `base_url`, `mimo-v2.6-pro` ve `glm-5.3`
+  **doğrulanmış** değerlerdir (kaynak ve tarih dosyanın başında yazılı).
+  Kimlikler değişirse tahmin edilmez: `--list-models` sağlayıcının kendi
+  listesini alır, karşılaştırır ve eksik varsa çıkış kodu 2 ile durur.
 - Anahtar yoksa üretim **hiç istek atmadan** durur (çıkış kodu 3).
 - 401/403 → anında durur. Art arda hata eşiği aşılırsa koşu güvenli biçimde
   durur ve o ana kadar yazılan veri korunur (`--no-resume` ile sıfırdan).
@@ -221,7 +227,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 241 test
+python -m pytest tests -q        # 252 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -238,7 +244,7 @@ notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
              train, evaluate, logcheck
-tests/       241 otomatik test
+tests/       252 otomatik test
 ```
 
 ## Lisans

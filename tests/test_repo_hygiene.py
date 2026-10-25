@@ -81,10 +81,22 @@ def test_no_secrets_committed():
     assert not offenders, f"possible secrets: {offenders}"
 
 
-def test_teacher_config_has_no_hardcoded_endpoint():
+def test_teacher_config_endpoint_is_the_verified_public_one():
+    """The endpoint is pinned on purpose: it is EVREN's public gateway.
+
+    Guessing is still forbidden -- the check below makes sure the only URLs in
+    the file are the verified gateway and the documentation links cited next
+    to it, and that no credential ever appears there.
+    """
     text = (ROOT / "configs" / "teachers.yaml").read_text(encoding="utf-8")
-    assert "base_url: \"env:EVREN_BASE_URL\"" in text
-    assert not re.search(r"https?://(?!<)", text), "endpoint must not be hard-coded"
+    assert 'base_url: "https://evren-llmapi.ssyz.org.tr/v1"' in text
+    urls = set(re.findall(r"https?://[^\s\"'<)]+", text))
+    allowed = {
+        "https://evren-llmapi.ssyz.org.tr/v1",
+        "https://evren.ssyz.org.tr/llm-inference",
+    }
+    assert urls <= allowed, f"unexpected URL(s) in config: {sorted(urls - allowed)}"
+    assert "api_key:" not in text and "sk-" not in text
 
 
 def test_readme_documents_install_and_known_limitations():

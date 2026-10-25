@@ -480,6 +480,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--max-records", type=int, default=None)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--health-check", action="store_true", help="Yalnızca bağlantıyı doğrula")
+    parser.add_argument(
+        "--list-models",
+        action="store_true",
+        help="Sağlayıcının /models listesini al ve yapılandırılmış kimliklerle karşılaştır",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Ağa çıkmadan planı yazdır")
     parser.add_argument("--list-families", action="store_true", help="Görev ailelerini listele")
     # --- pro mode ---
@@ -590,6 +595,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 3
 
     pool = TeacherPool(teachers)
+    if args.list_models:
+        try:
+            report = pool.list_models()
+        except TeacherError as exc:
+            print(f"/models alınamadı: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if report["missing"]:
+            print(
+                "\nEKSİK: yapılandırmadaki şu kimlikler sağlayıcıda yok: "
+                + ", ".join(report["missing"])
+                + ". configs/teachers.yaml içindeki `model` alanlarını "
+                "yukarıdaki listeden düzeltin.",
+                file=sys.stderr,
+            )
+        return 0 if report["ok"] else 2
     if args.health_check:
         report = pool.health_check()
         print(json.dumps(report, ensure_ascii=False, indent=2))
