@@ -1,2 +1,2 @@
-# G-kT-rk-Ultra
+# GökTürk-Ultra
 GPT-OSS-20B Based Agentic Al
