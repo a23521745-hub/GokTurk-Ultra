@@ -53,7 +53,14 @@ python -m gokturk.data_generation --mode pro --teachers-config configs/teachers.
 ## 2. Kaggle notebook'unu hazırla
 
 1. Yeni notebook → **Accelerator: GPU T4 ×2**, **Internet: On**.
-2. Repoyu klonla ve kur:
+   İnternet kapalıysa iki şey birden bozulur: Hugging Face indirmesi ve EVREN
+   çağrıları ("Temporary failure in name resolution" olarak görünür).
+2. **Doğru dalı çekin.** Çalışma `main`e birleşmeden `main`'de yeni profiller
+   yoktur; notebook bu yüzden `REPO_BRANCH = "arena/29737df4-gokturk-ultra"` ile
+   klonlar. Belirti: `ConfigError: config file not found:
+   .../configs/training_qwen3_5_4b_t4.yaml` — veri/model hatası değil, **yanlış
+   dal**. PR birleştikten sonra `REPO_BRANCH = "main"` yapılabilir.
+3. Repoyu klonla ve kur:
 
 ```bash
 !git clone https://github.com/a23521745-hub/GokTurk-Ultra.git
@@ -61,13 +68,13 @@ python -m gokturk.data_generation --mode pro --teachers-config configs/teachers.
 !pip install -q -e ".[train,qlora]"     # torch CUDA tekerleği burada sorun değil
 ```
 
-3. İlk iş **diski ölçmek** (bu belgenin varlık sebebi):
+4. İlk iş **diski ölçmek** (bu belgenin varlık sebebi):
 
 ```bash
 !df -h /kaggle/working; free -h
 ```
 
-4. Ön denetim (model indirmez, GPU harcamaz):
+5. Ön denetim (model indirmez, GPU harcamaz):
 
 ```bash
 !python -m gokturk.train --config configs/training_qwen3_5_4b_t4.yaml --plan-only

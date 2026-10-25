@@ -203,6 +203,38 @@ def test_dataparallel_replica_error_is_recognised():
     assert "4-bit" in finding["message"]
 
 
+def test_notebook_clones_the_pr_branch_not_main():
+    """Kaggle'da main klonlanırsa yeni profiller yok: dal açıkça sabitlenmeli."""
+    import json
+
+    nb = json.loads((ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8"))
+    text = "".join("".join(cell["source"]) for cell in nb["cells"])
+    assert "REPO_BRANCH" in text
+    assert '"--branch", REPO_BRANCH' in text
+    assert "arena/29737df4-gokturk-ultra" in text
+    # dal bulunamazsa main'e düşerken uyarmalı
+    assert "main çekiliyor" in text
+
+
+def test_notebook_explains_missing_config_instead_of_crashing():
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "config_path.is_file()" in text
+    assert "config yok:" in text
+    assert "yanlış dalda" in text
+
+
+def test_notebook_checks_internet_before_downloading():
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "huggingface.co" in text
+    assert "Internet" in text
+
+
+def test_run_doc_mentions_branch_and_internet():
+    text = RUN_DOC.read_text(encoding="utf-8")
+    assert "REPO_BRANCH" in text
+    assert "Internet" in text
+
+
 def test_notebook_pins_a_single_gpu_before_torch_import():
     text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
     assert "CUDA_VISIBLE_DEVICES" in text
