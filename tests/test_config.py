@@ -35,10 +35,33 @@ def test_repo_configs_are_valid():
 
     teachers = load_teachers_config(ROOT / "configs" / "teachers.yaml")
     assert len(teachers.models()) == 2
-    # The shipped template must not contain a hard-coded endpoint or key.
-    assert teachers.unresolved_refs, "template should require env-provided values"
-    with pytest.raises(ConfigError):
-        teachers.require_ready()
+    # The shipped config is ready to use: verified ids are literals, so the
+    # operator only has to provide the API key.
+    assert teachers.unresolved_refs == []
+    teachers.require_ready()  # must not raise
+
+
+def test_repo_teachers_are_mimo_and_glm():
+    """The shipped teacher pair is MiMo-V2.6-Pro + GLM-5.3.
+
+    Kimi was dropped because EVREN does not serve it (operator info, 2026-10).
+    This test exists so the swap cannot silently regress.
+    """
+    teachers = load_teachers_config(ROOT / "configs" / "teachers.yaml")
+    names = [t.name for t in teachers.models()]
+    assert names == ["mimo-v26-pro", "glm-53"]
+
+    roles = {t.name: t.roles() for t in teachers.models()}
+    assert "code" in roles["glm-53"], "GLM must cover the coding teacher role"
+    assert "reasoning" in roles["mimo-v26-pro"]
+
+    raw = (ROOT / "configs" / "teachers.yaml").read_text(encoding="utf-8")
+    assert "EVREN_MODEL_KIMI" not in raw
+    assert "name: kimi" not in raw
+    # Ids are literals taken from the provider's own fleet list (2026-10-25).
+    assert 'model: "glm-5.3"' in raw
+    assert 'model: "mimo-v2.6-pro"' in raw
+    assert 'base_url: "https://evren-llmapi.ssyz.org.tr/v1"' in raw
 
 
 def test_teacher_config_rejects_guessed_model_id(tmp_path: Path):

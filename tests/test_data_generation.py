@@ -94,7 +94,7 @@ def test_parse_draft(text, expected):
 def test_record_id_is_deterministic():
     a = make_record_id("seed-1", "mimo", 0, "coding")
     b = make_record_id("seed-1", "mimo", 0, "coding")
-    c = make_record_id("seed-1", "kimi", 0, "coding")
+    c = make_record_id("seed-1", "glm", 0, "coding")
     assert a == b != c
     assert a.startswith("gtu-cod-")
 
@@ -217,6 +217,22 @@ def test_cli_dry_run_works_without_credentials(tmp_path: Path, monkeypatch, caps
     assert code == 0
     assert "planned_records" in captured.out
     assert not out.exists()
+    assert "EVREN_API_KEY" in captured.err
+
+
+def test_cli_list_models_requires_key(tmp_path: Path, monkeypatch, capsys):
+    monkeypatch.delenv("EVREN_API_KEY", raising=False)
+    code = main(
+        [
+            "--teachers-config",
+            str(ROOT / "configs" / "teachers.yaml"),
+            "--seeds",
+            str(ROOT / "data" / "seeds" / "turkish_seed_tasks.jsonl"),
+            "--list-models",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 3
     assert "EVREN_API_KEY" in captured.err
 
 

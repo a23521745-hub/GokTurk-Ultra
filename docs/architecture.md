@@ -59,9 +59,17 @@ seeds ──> drafter (öğretmen) ──> prompt ──> solver (öğretmen) �
 
 - API anahtarı hiçbir dosyada tutulmaz. `configs/teachers.yaml` yalnızca
   **değişken adını** (`api_key_env`) içerir; değer `os.environ`'dan okunur.
-- `base_url` ve model kimlikleri `env:VAR` biçiminde referanslanabilir.
+- `base_url` ve model kimlikleri `env:VAR` biçiminde de referanslanabilir.
   Değişken tanımlı değilse üretim **ağa çıkmadan** durur (`--dry-run` yalnızca
   plan yazdırır). Hiçbir endpoint veya model kimliği uydurulmamıştır.
+- Repoda gelen değerler **doğrulanmıştır** (2026-10-25):
+  `https://evren-llmapi.ssyz.org.tr/v1` (kimliksiz GET, sağlayıcının kendi
+  `API anahtarı eksik` yanıtını döndürdü), `mimo-v2.6-pro` ve `glm-5.3`
+  (EVREN'in model filosu sayfası + bağımsız istemcilerin model listeleri).
+- Kimlikler koda gömülü bir varsayım değil, **çalışma anında doğrulanabilir**
+  bir iddiadır: `python -m gokturk.data_generation --list-models` sağlayıcının
+  `GET /models` yanıtını alır ve `configs/teachers.yaml` içindeki kimliklerle
+  karşılaştırır; eksik varsa çıkış kodu 2 ile durur.
 - `.env` `.gitignore` ile hariç tutulur; `.env.example` yalnızca boş anahtarlar
   içerir.
 - Kayıt şeması `source` içinde kimlik bilgisi kabul etmez (`data_quality`
@@ -238,10 +246,12 @@ regresyon yakalamak için bir duman göstergesidir.
 
 ## 9. Bilinen sınırlamalar (özet)
 
-1. Gerçek öğretmen uç noktası/model kimlikleri doğrulanmadı; yapılandırma
-   `env:` referanslarıyla boş bırakıldı. EVREN'in OpenAI-uyumlu olduğu
-   belgelenmiş olsa da, Kimi/MiMo kimlikleri sağlayıcının listesinden
-   doğrulanmalı.
+1. Uç nokta ve model kimlikleri **herkese açık kaynaklardan** doğrulandı
+   (2026-10-25); ancak bu repoda anahtarla **kimlik doğrulanmış bir çağrı**
+   yapılmadı — yani `/models` listesi ve kotanın gerçekten açık olduğu
+   operatör tarafından bir kez `--list-models` / `--health-check` ile
+   teyit edilmelidir. (Öğretmen 2 Kimi-K3'ten GLM-5.3'e taşındı: EVREN'in
+   filosunda Kimi yok.)
 2. Üretim tek iş parçacıklı ve sıralıdır; PRO modunda örnek başına 3–4 çağrı
    yapıldığından 10.000 örnek ≈30–40 bin çağrı demektir ve oran sınırına bağlı
    olarak saatler sürer. Paralelleştirme eklenmedi (bilinçli: sıralı akış
