@@ -236,6 +236,16 @@ def test_cli_list_models_requires_key(tmp_path: Path, monkeypatch, capsys):
     assert "EVREN_API_KEY" in captured.err
 
 
+def test_cli_plan_only_requires_pro_mode(monkeypatch, capsys):
+    """--plan-only in basic mode used to fall through to the API-key gate."""
+    monkeypatch.delenv("EVREN_API_KEY", raising=False)
+    code = main(["--plan-only", "--target", "50"])
+    captured = capsys.readouterr()
+    assert code == 4
+    assert "--mode pro" in captured.err
+    assert "EVREN_API_KEY" not in captured.err
+
+
 def test_cli_refuses_to_generate_without_key(tmp_path: Path, monkeypatch, capsys):
     monkeypatch.delenv("EVREN_API_KEY", raising=False)
     code = main(

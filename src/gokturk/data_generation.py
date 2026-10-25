@@ -514,6 +514,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     families = [f.strip() for f in (args.families or "").split(",") if f.strip()] or None
     levels = [lvl.strip() for lvl in (args.levels or "").split(",") if lvl.strip()] or None
 
+    if args.plan_only and args.mode != "pro":
+        print(
+            "--plan-only yalnızca --mode pro ile çalışır (10 aileli plan üretir).\n"
+            "Örnek: python -m gokturk.data_generation --mode pro --plan-only --target 10000\n"
+            "Basic modda plan yerine --dry-run kullanın (tohum listesini gösterir).",
+            file=sys.stderr,
+        )
+        return 4
+
     if args.mode == "pro" and (args.plan_only or args.dry_run):
         try:
             summary = plan_only(
