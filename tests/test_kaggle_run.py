@@ -162,6 +162,83 @@ def test_loader_evidence_is_recorded():
 
 
 # ---------------------------------------------------------------------------
+# Unsloth füzyonlu kayıp hatası (Kaggle'da gerçekten alındı, 2026-10-25)
+# ---------------------------------------------------------------------------
+FUSED_LOSS_TRACEBACK = """
+117.7s	  File "/usr/local/lib/python3.13/dist-packages/unsloth_zoo/cross_entropy_loss.py", line 506, in accumulate_chunk
+117.7s	    (chunk_loss, (unscaled_loss,)) = torch.func.grad_and_value(
+117.7s	RuntimeError: grad_and_value(f)(*args): Expected f(*args) to return a scalar Tensor, got tensor with 2 dims. Maybe you wanted to use the vjp or jacrev APIs instead?
+"""
+
+
+def test_fused_loss_traceback_is_recognised():
+    from gokturk.logcheck import FAILED, analyze_log
+
+    report = analyze_log(FUSED_LOSS_TRACEBACK)
+    codes = {f["code"] for f in report["findings"]}
+    assert "unsloth-fused-loss" in codes
+    assert report["verdict"] == FAILED
+    finding = next(f for f in report["findings"] if f["code"] == "unsloth-fused-loss")
+    assert "--backend transformers" in finding["action"]
+    assert "UNSLOTH_RETURN_LOGITS" in finding["action"]
+    assert "average_tokens_across_devices" in finding["action"]
+
+
+def test_fused_loss_rule_does_not_fire_on_normal_logs():
+    from gokturk.logcheck import analyze_log
+
+    report = analyze_log("{'loss': 1.83, 'grad_norm': 0.6, 'learning_rate': 1e-4, 'epoch': 0.1}\n")
+    assert "unsloth-fused-loss" not in {f["code"] for f in report["findings"]}
+
+
+def test_unsloth_plain_loss_flag_sets_the_env_var(monkeypatch):
+    """Bayrak, `import unsloth`'tan önce UNSLOTH_RETURN_LOGITS=1 ayarlamalı."""
+    from gokturk.train import main
+
+    monkeypatch.delenv("UNSLOTH_RETURN_LOGITS", raising=False)
+    code = main(
+        [
+            "--config",
+            str(CONFIG_4B),
+            "--unsloth-plain-loss",
+            "--plan-only",
+        ]
+    )
+    assert code == 0
+    import os
+
+    assert os.environ["UNSLOTH_RETURN_LOGITS"] == "1"
+
+
+def test_plain_loss_flag_is_opt_in():
+    import inspect
+
+    from gokturk.train import main, run_training
+
+    assert inspect.signature(run_training).parameters["unsloth_plain_loss"].default is False
+    source = inspect.getsource(main)
+    assert "--unsloth-plain-loss" in source
+
+
+def test_notebook_selects_profile_explicitly():
+    """Notebook artık Unsloth'u otomatik seçmemeli: 4B profili varsayılan."""
+    text = (ROOT / "notebooks" / "kaggle_training.ipynb").read_text(encoding="utf-8")
+    assert "RUN_PROFILE" in text
+    assert "training_qwen3_5_4b_t4.yaml" in text
+    assert 'if unsloth_report is not None and unsloth_report.ok' not in text, (
+        "eski otomatik Unsloth seçimi geri gelmemeli"
+    )
+
+
+def test_run_doc_documents_the_fused_loss_failure():
+    text = RUN_DOC.read_text(encoding="utf-8")
+    assert "unsloth-fused-loss" in text
+    assert "UNSLOTH_RETURN_LOGITS" in text
+    assert "average_tokens_across_devices" in text
+    assert "scalar Tensor" in text
+
+
+# ---------------------------------------------------------------------------
 # koşu belgesi
 # ---------------------------------------------------------------------------
 def test_run_checklist_doc_covers_the_required_steps():

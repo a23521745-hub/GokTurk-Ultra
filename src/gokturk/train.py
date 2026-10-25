@@ -493,8 +493,18 @@ def run_training(
     output_dir: str | None = None,
     skip_preflight: bool = False,
     cpu_ok: bool = False,
+    unsloth_plain_loss: bool = False,
     backend: str = "transformers",
 ) -> int:
+    if unsloth_plain_loss:
+        # UNSLOTH_RETURN_LOGITS=1, Unsloth'un füzyonlu CE çekirdeğini kapatır ve
+        # düz logits + standart CE kullanır. Import'tan ÖNCE ayarlanmalı.
+        # Bedeli: tam logits bellekte tutulur (daha çok VRAM, biraz daha yavaş).
+        os.environ["UNSLOTH_RETURN_LOGITS"] = "1"
+        LOGGER.warning(
+            "Unsloth füzyonlu kayıp kapatıldı (UNSLOTH_RETURN_LOGITS=1): "
+            "daha çok VRAM kullanılır, uyumluluk sorunları bu yolu atlar."
+        )
     if backend not in ("transformers", "unsloth"):
         raise ValueError(f"unknown backend {backend!r}")
     hardware = detect_hardware()
@@ -725,6 +735,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--eval-file", default=None, help="data.eval_file üzerine yaz")
     parser.add_argument("--output-dir", default=None)
     parser.add_argument(
+        "--unsloth-plain-loss",
+        action="store_true",
+        help="Unsloth füzyonlu CE kaybını kapat (UNSLOTH_RETURN_LOGITS=1; daha çok VRAM)",
+    )
+    parser.add_argument(
         "--cpu-ok",
         action="store_true",
         help="CPU'da bilinçli mini koşu (≤1B model, kısa LoRA); ön denetim engellemez",
@@ -757,6 +772,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_dir=args.output_dir,
         skip_preflight=args.skip_preflight,
         cpu_ok=args.cpu_ok,
+        unsloth_plain_loss=args.unsloth_plain_loss,
         backend=args.backend,
     )
 

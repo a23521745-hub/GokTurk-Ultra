@@ -105,6 +105,52 @@ print(type(model).__name__)          # Qwen3_5ForCausalLM beklenir
 
 ---
 
+## 3.5 Bilinen hata: Unsloth füzyonlu kayıp (fused loss)
+
+**Belirti (2026-10-25, Kaggle, notebook'un eski varsayılanı):** eğitim ilk
+adımda düşer, iz:
+
+```
+File ".../unsloth_zoo/fused_losses/cross_entropy_loss.py", line 506, in accumulate_chunk
+    (chunk_loss, (unscaled_loss,)) = torch.func.grad_and_value(
+RuntimeError: grad_and_value(f)(*args): Expected f(*args) to return a scalar Tensor, got tensor with 2 dims. Maybe you wanted to use the vjp or jacrev APIs instead?
+```
+
+**Ne değil:** veri hatası, config hatası, disk/VRAM sorunu değil. Model yüklendi,
+ilk `forward` çalıştı; hata Unsloth'un füzyonlu CE çekirdeğinin içinde.
+
+**Nedeni:** `unsloth_zoo`'nun füzyonlu kayıp çekirdeği, kurulu `torch` /
+`transformers` sürümüyle uyumsuz. Kaggle imajı 2026-10-25 itibarıyla
+Python 3.13 + güncel torch getiriyor; Unsloth tarafında bu kombinasyon için
+düzeltilmiş bir sürüm yok. `logcheck` bu izi tanır:
+`python -m gokturk.logcheck --log train.log` → `unsloth-fused-loss` (BAŞARISIZ).
+
+**Çözümler, tercih sırasıyla:**
+
+1. **Unsloth'u hiç kullanmayın (önerilen).** 4B'de Unsloth gerekmez; bu repodaki
+   transformers + bitsandbytes yolu (NF4 QLoRA) 4B'yi T4'e rahat sığdırıyor:
+
+   ```bash
+   python -m gokturk.train --config configs/training_qwen3_5_4b_t4.yaml \
+     --max-steps 60 --output-dir /kaggle/working/run-4b
+   ```
+
+   Notebook'ta `RUN_PROFILE = "qwen3.5-4b"` (varsayılan) bu yolu seçer.
+2. **Füzyonlu kaybı kapatın:** `--unsloth-plain-loss` (arkaplanda `import
+   unsloth`'tan önce `UNSLOTH_RETURN_LOGITS=1`). Düz logits + standart CE
+   kullanılır; bedeli **daha çok VRAM** — gpt-oss-20b'de 16 GB'a sığmayabilir,
+   4B'de sorun değil.
+3. **Normalizasyon anahtarını kapatın:** `TrainingArguments(...,
+   average_tokens_across_devices=False)`. Tek GPU'da matematik değişmez; ilgili
+   Unsloth hatası (#3769) bu bayrakla aşılıyor.
+4. Sürümleri sabitleyin: `unsloth` ve `unsloth_zoo`'yu aynı sürüme kilitleyin;
+   Kaggle'da her oturumda `pip install unsloth` çekmek sürüm kayması demektir.
+
+Unsloth yalnızca **gpt-oss-20b** gibi generic yolun sığmadığı modellerde gerekir;
+o koşu ertelendi (bkz. `docs/taban-model-secimi.md`).
+
+---
+
 ## 4. 60 adımlık ölçüm koşusu
 
 ```bash
@@ -174,6 +220,7 @@ değişmedi.
 - [ ] `df -h /kaggle/working` → boş alan ≥ 12 GB (4B için)
 - [ ] `--plan-only` → `weights-disk-insufficient` **yok**
 - [ ] Yükleme testi → sınıf `Qwen3_5ForCausalLM`, `model.visual.*` unexpected
+- [ ] `RUN_PROFILE = "qwen3.5-4b"` (Unsloth yolu değil; fused-loss hatası için §3.5)
 - [ ] 60 adım → `logcheck` `SAĞLIKLI` veya `DİKKAT` (kayıp düşüyor)
 - [ ] `adapter/` + `run_manifest.json` indirildi
 - [ ] HF push (özel depo) → adaptör boyutu 30–120 MB
