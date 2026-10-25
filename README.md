@@ -153,9 +153,12 @@ python -m gokturk.train --config configs/training_qwen3_5_9b_t4.yaml --plan-only
 python -m gokturk.publish --serve-plan --base-model Qwen/Qwen3.5-9B --ram-gb 16 --vcpu 2
 ```
 
-> Not: Qwen3.5 ailesi görüntü+metin mimarisidir; metin SFT'si için yükleyici
-> yolunun `AutoProcessor`'a genişletilmesi **henüz yapılmadı**. Bugün kesin
-> çalışan metin yolu Qwen3-14B profilidir.
+> Not (düzeltildi, 2026-10-25): Qwen3.5 ailesi görüntü+metin mimarisidir ama
+> metin SFT'si için **AutoProcessor gerekmez** — transformers'ta
+> `Qwen3_5ForCausalLM` görüntü kulesini (`^model.visual.*`) yok sayar, mevcut
+> `AutoModelForCausalLM` + `AutoTokenizer` yolu yeterlidir. Bugünkü gerçek kısıt
+> bellek değil **disktir**: 9B bf16 ≈18 GB, Kaggle'da 19,2 GB boş alan → ilk
+> gerçek koşu `configs/training_qwen3_5_4b_t4.yaml` (4B, ≈9,3 GB) ile yapılır.
 
 ## Eğitim
 
@@ -318,7 +321,7 @@ yargıç olarak kullanır ve **doğrulanmamış** olduğu raporda belirtilir.
 ## Testler
 
 ```bash
-python -m pytest tests -q        # 341 test
+python -m pytest tests -q        # 352 test
 ruff check src tests             # statik kontrol
 ```
 
@@ -332,12 +335,12 @@ configs/     teachers.yaml, training.yaml, training_unsloth_t4.yaml
 data/        seeds/, eval/, samples/  (ham/işlenmiş veri .gitignore'da)
 docs/        architecture.md, kaggle-rehberi.md, yayinlama-ve-gguf.md,
              taban-model-secimi.md, servis-ve-dinamik-lora.md,
-             github-actions-mini-egitim.md
+             github-actions-mini-egitim.md, kaggle-gercek-kosus.md
 notebooks/   kaggle_training.ipynb
 src/gokturk/ schema, config, teachers, task_specs, curriculum,
              data_generation, data_quality, env_check, unsloth_backend,
              train, evaluate, logcheck, publish, serve
-tests/       341 otomatik test
+tests/       352 otomatik test
 ```
 
 ## Lisans

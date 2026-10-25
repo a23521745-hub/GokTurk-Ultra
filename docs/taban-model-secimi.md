@@ -27,13 +27,30 @@ Eğitim tahmini: `check_environment(..., load_in_4bit=True, backend="unsloth")`,
 T4 15.6 GB, 4-bit QLoRA. Servis tahmini:
 `python -m gokturk.publish --serve-plan --base-model <model> --ram-gb 16 --vcpu 2`.
 
-| Taban | Parametre | Eğitim (seq 1024) | Eğitim (seq 2048) | Q4_K_M ağırlık | CPU 2 vCPU | Karar |
-| --- | --- | --- | --- | --- | --- | --- |
-| `openai/gpt-oss-20b` | 20.9B MoE | ≈12 GB, **engelleyici** | ≈21 GB, **engelleyici** | ≈11.2 GB | 0.7–1.8 tok/s | ❌ eğitim sınırda |
-| `Qwen/Qwen3-14B` | 14.8B dense, metin | ≈11.8 GB | ≈14.9 GB (tight) | ≈9.0 GB | 0.9–2.2 tok/s | 🟡 sınırda |
-| **`Qwen/Qwen3.5-9B`** | 9B dense, çok kipli | **≈7.2 GB** | **≈9.1 GB** | ≈5.5 GB | 1.5–3.6 tok/s | ✅ **önerilen** |
-| `Qwen/Qwen3.5-4B` | 4B dense, çok kipli | ≈3.2 GB | ≈4.0 GB | ≈2.4 GB | 3.3–8.3 tok/s | ✅ CPU demosu için |
-| `Qwen/Qwen3.5-27B` | 27B | ≈22 GB, sığmaz | — | ≈16.5 GB | 0.5–1.2 tok/s | ❌ T4'e sığmaz |
+| Taban | Parametre | Eğitim (seq 1024) | Eğitim (seq 2048) | Q4_K_M ağırlık | bf16 indirme | CPU 2 vCPU | Karar |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `openai/gpt-oss-20b` | 20.9B MoE | ≈12 GB, **engelleyici** | ≈21 GB, **engelleyici** | ≈11.2 GB | ≈13 GB (MXFP4) | 0.7–1.8 tok/s | ❌ eğitim sınırda |
+| `Qwen/Qwen3-14B` | 14.8B dense, metin | ≈11.8 GB | ≈14.9 GB (tight) | ≈9.0 GB | **≈29,6 GB → disk yok** | 0.9–2.2 tok/s | ❌ Kaggle diskine sığmaz |
+| `Qwen/Qwen3.5-9B` | 9B dense, çok kipli | **≈7.2 GB** | **≈9.1 GB** | ≈5.5 GB | ≈18 GB → **sınırda** | 1.5–3.6 tok/s | 🟡 2. koşu |
+| **`Qwen/Qwen3.5-4B`** | **4,66B dense, çok kipli** | **≈3,2 GB** | **≈4,0 GB** | ≈2,4 GB | **≈9,3 GB → rahat** | **3.3–8.3 tok/s** | ✅ **ilk gerçek koşu** |
+| `Qwen/Qwen3.5-27B` | 27B | ≈22 GB, sığmaz | — | ≈16.5 GB | ≈54 GB | 0.5–1.2 tok/s | ❌ T4'e ve diske sığmaz |
+
+**Disk, VRAM'den önce gelir (2026-10-25 düzeltmesi).** Kaggle'da ölçülen boş
+alan **19,2 GB** (`/kaggle/working` 20 GB). 4-bit eğitim için önce **bf16
+ağırlıkları indirmek** gerekir; indirme diske sığmazsa VRAM hesabı anlamsızdır:
+
+* `Qwen/Qwen3-14B` → ≈29,6 GB indirme **sığmaz** → `env_check` artık
+  `weights-disk-insufficient` **engelleyici** bulgusu verir.
+* `Qwen/Qwen3.5-9B` → ≈18 GB → `weights-disk-tight` **uyarısı** (adaptör, log ve
+  llama.cpp kopyası için pay kalmaz).
+* `Qwen/Qwen3.5-4B` → HF'teki toplam depolama **9,33 GB** (2 safetensors parçası,
+  4.659.865.088 parametre) → rahat.
+
+Bu yüzden **ilk gerçek Kaggle koşusu 4B ile** yapılır
+(`configs/training_qwen3_5_4b_t4.yaml`, gerekçe ve adımlar:
+[`docs/kaggle-gercek-kosus.md`](kaggle-gercek-kosus.md)). 4B ile boru hattı
+kanıtlandıktan sonra 9B'ye geçilir; 9B'de disk payı için `max_seq_len` 1024,
+`save_total_limit: 1` ve ara çıktı temizliği gerekir.
 
 Kullanılan komutlar (tekrar üretilebilir):
 
@@ -56,21 +73,21 @@ değil), `Qwen/Qwen3-14B` (14.8B, metin). `unsloth/Qwen3.5-9B-GGUF` mevcut.
 3. Güncel nesil (2026-02), Apache-2.0, Unsloth GGUF'ları hazır.
 4. Aynı aile 4B/27B'ye açık: veri seti ve boru hattı değişmeden ölçek değişir.
 
-**Ama iki uyarı:**
+**Düzeltme (2026-10-25): "AutoProcessor gerekir" iddiası yanlıştı.**
 
-- **Çok kipli.** Qwen3.5 görüntü+metin (`Qwen3_5ForConditionalGeneration`).
-  Metin SFT'si çalışır ama yükleyici `AutoProcessor` ister ve görüntü kulesi
-  bellekte yer kaplar. Bu repodaki `train.py` metin yolu `AutoTokenizer` +
-  `AutoModelForCausalLM` kullanıyor; **Qwen3.5 ile gerçek koşudan önce**
-  `AutoModelForImageTextToText`/`AutoProcessor` yolunun eklenmesi gerekir.
-  Bu bir TODO'dur, çözülmüş değil.
-- Bu yüzden **hızlı ve kesin çözüm** olarak `Qwen/Qwen3-14B` profili de hazır
-  (`configs/training_qwen3_14b_t4.yaml`): metin-only, mevcut kod yolu bugün
-  olduğu gibi çalışır, seq 1024'te ≈11.8 GB ile T4'e sığar. Bedeli: 2048
-  bağlamda sınırda (≈14.9 GB) ve CPU'da daha yavaş.
+- Qwen3.5 görüntü+metin (`Qwen3_5ForConditionalGeneration`) ama transformers'ta
+  `Qwen3_5ForCausalLM._keys_to_ignore_on_load_unexpected = [r"^mtp.*",
+  r"^model.visual.*"]` tanımlı. Yani görüntü kulesi ağırlıkları yüklenirken
+  **yok sayılır** ve mevcut `AutoTokenizer` + `AutoModelForCausalLM` metin yolu
+  yeterlidir; `AutoProcessor`/`AutoModelForImageTextToText` eklemek
+  **gerekmez** (kaynak: transformers `models/qwen3_5/modeling_qwen3_5.py`).
+  Bu bir kod okuma bulgusudur: gerçek koşuda yükleme logunda `model.visual.*`
+  "unexpected key" olarak görünmelidir — Kaggle koşusunun 1. kontrolü budur.
+- Gerçek kısıt **disk**: bkz. yukarıdaki tablo. 14B'nin 29,6 GB bf16 indirmesi
+  Kaggle'ın 19,2 GB boş alanına sığmaz, bu yüzden 14B artık önerilmez.
 
-Kısa karar: **bugün çalışsın** isteniyorsa Qwen3-14B (seq 1024), **en iyi
-sonuç** isteniyorsa Qwen3.5-9B + çok kipli yükleyici TODO'su.
+Kısa karar: **ilk gerçek koşu Qwen3.5-4B** (disk rahat, VRAM rahat), **ikinci
+koşu Qwen3.5-9B** (disk sınırda, `max_seq_len: 1024`). 14B rafa kalktı.
 
 ## 4. HF Spaces gerçeği (planı değiştiren kısım)
 
@@ -123,7 +140,9 @@ yaratır; ama model asla öğretmenin kapasitesine eşitlenmez. "Ultra" iddiası
 | Eğitim profilleri | ✅ `configs/training_qwen3_5_9b_t4.yaml`, `configs/training_qwen3_14b_t4.yaml` |
 | Ön denetim sayıları | ✅ `env_check.KNOWN_MODELS` içine Qwen girdileri eklendi |
 | GGUF/servis planı | ✅ `publish.BASE_PARAMS_B` + `--serve-plan` (dense/MoE ayrımı doğru) |
-| Metin yolu (`AutoTokenizer` + `AutoModelForCausalLM`) | ✅ Qwen3-14B için hazır; ❌ Qwen3.5 çok kipli yolu **yok** |
+| Metin yolu (`AutoTokenizer` + `AutoModelForCausalLM`) | ✅ Qwen3-14B **ve Qwen3.5** için hazır (görüntü kulesi `^model.visual.*` ile yok sayılır; 2026-10-25 düzeltmesi) |
+| Disk denetimi | ✅ `env_check` `weights-disk-insufficient` / `weights-disk-tight` üretir (Kaggle 19,2 GB ölçümüyle uyumlu) |
+| 4B profili | ✅ `configs/training_qwen3_5_4b_t4.yaml` (ilk gerçek koşu) |
 | Veri/plan/öğretmen hattı | ✅ tabandan bağımsız, değişmiyor |
 
 ## 7. Ya EVREN HPC eğitimi açılırsa
@@ -137,6 +156,8 @@ yeni modelle konuşur.
 
 Karar sırası önerisi:
 
-1. **Bugün:** Qwen3-14B ile 10k veri üret → 60 adım ölçüm → değerlendir.
-2. Qwen3.5-9B'ye geçiş, çok kipli yükleyici eklendikten sonra.
+1. **Bugün:** 10k veri üret → **Qwen3.5-4B** ile 60 adım ölçüm → değerlendir
+   ([`docs/kaggle-gercek-kosus.md`](kaggle-gercek-kosus.md)).
+2. **Sonra:** Qwen3.5-9B'ye geçiş (disk sınırda; `max_seq_len: 1024`,
+   `save_total_limit: 1`).
 3. EVREN HPC eğitimi açıldığında 20B'ye dönüş (aynı veri setiyle).

@@ -40,6 +40,7 @@ configs/
   training.yaml        Eğitim ayarları — generic transformers yolu
   training_unsloth_t4.yaml  Unsloth 4-bit QLoRA (Kaggle 2×T4) ayarları
   training_mini_cpu.yaml    Mini koşu: 0.6B, fp32, 30 adım (CPU / GitHub runner)
+  training_qwen3_5_4b_t4.yaml  İlk gerçek Kaggle koşusu: 4B, 4-bit QLoRA, seq 1024
 .github/workflows/
   ci.yml               ruff + pytest + veri hattı planı (anahtar gerektirmez)
   mini-adapter.yml     Elle tetiklenen mini LoRA → manifest → logcheck → GGUF LoRA
@@ -49,7 +50,7 @@ data/
   samples/             6 elle yazılmış örnek (eğitim seti DEĞİL)
 notebooks/
   kaggle_training.ipynb  Kaggle deneyi (ön denetim → duman testi → dürüst duruş)
-tests/                 341 otomatik test
+tests/                 352 otomatik test
 ```
 
 Veri akışı:

@@ -160,7 +160,9 @@ def plan_serving(
             ],
             "caveats": [
                 "CPU'da 9B fp32 ≈" + str(peft_ram) + " GB RAM ister; GPU'da bf16 aynı boyutta.",
-                "Qwen3.5 çok kipli ise yükleyici AutoProcessor ister (bu repoda TODO).",
+                "Qwen3.5 çok kipli olsa da metin yolu AutoModelForCausalLM ile "
+                "çalışır: transformers `Qwen3_5ForCausalLM` görüntü kulesini "
+                "(`^model.visual.*`) yok sayar; AutoProcessor gerekmez.",
             ],
         }
     )

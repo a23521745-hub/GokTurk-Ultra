@@ -8,12 +8,17 @@
 #   * Apache-2.0, gated değil, Unsloth GGUF'ları mevcut (Qwen3.5-9B-GGUF).
 #   * Kimlik ve parametre sayısı HF model API'sinden doğrulandı (2026-10-25).
 #
-# DİKKAT — ÇOK KİPLİ
-#   Qwen3.5 mimarisi görüntü+metin (Qwen3_5ForConditionalGeneration). Metin
-#   SFT'si çalışır ama yükleyici AutoProcessor ister ve görüntü kulesi de
-#   bellekte yer kaplar. Sadece metin isteniyorsa Qwen3-14B (metin) profili
-#   configs/training_qwen3_14b_t4.yaml kullanılabilir; ikisi arasındaki karar
-#   docs/taban-model-secimi.md içinde.
+# DİKKAT — ÇOK KİPLİ AMA METİN YOLU YETER (2026-10-25'te düzeltildi)
+#   Qwen3.5 mimarisi görüntü+metin (Qwen3_5ForConditionalGeneration) olsa da
+#   AutoProcessor GEREKMEZ: transformers'ta `Qwen3_5ForCausalLM`
+#   `_keys_to_ignore_on_load_unexpected = [r"^mtp.*", r"^model.visual.*"]`
+#   tanımlar, görüntü kulesi ağırlıkları yüklenirken yok sayılır. Yani mevcut
+#   `AutoModelForCausalLM` + `AutoTokenizer` yolu metin SFT'si için yeterlidir
+#   (kaynak: transformers models/qwen3_5/modeling_qwen3_5.py).
+#   YENİ KISIT DİSKTİR: 9B bf16 ≈18 GB, Kaggle'da ölçülen boş alan 19,2 GB →
+#   `weights-disk-tight` uyarısı çıkar. İlk gerçek koşu bu yüzden
+#   configs/training_qwen3_5_4b_t4.yaml (4B, ≈9,3 GB indirme) ile yapılır;
+#   gerekçe docs/kaggle-gercek-kosus.md içinde.
 #
 # Bu dosya bir GARANTİ değildir. Gerçek koşu yapılmadan hiçbir başarı iddiası
 # üretilmez; önce `--plan-only` ve duman testi.

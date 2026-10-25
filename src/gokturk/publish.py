@@ -66,7 +66,7 @@ BASE_PARAMS_B = {
     "openai/gpt-oss-120b": 116.8,
     # Qwen tabanları (v1 adayları); kimlikler HF model API'sinden doğrulandı.
     "Qwen/Qwen3.5-9B": 9.0,
-    "Qwen/Qwen3.5-4B": 4.0,
+    "Qwen/Qwen3.5-4B": 4.66,
     "Qwen/Qwen3.5-27B": 27.0,
     "Qwen/Qwen3-14B": 14.8,
     "Qwen/Qwen3-0.6B": 0.6,

@@ -52,8 +52,14 @@ KNOWN_MODELS: dict[str, dict[str, Any]] = {
     # --- Qwen tabanları (v1 adayları) -------------------------------------
     # Kimlikler ve parametre sayıları Hugging Face model API'sinden okundu
     # (2026-10-25). Qwen3.5 ailesi görüntü+metin (image-text-to-text) mimarisi
-    # kullanır: metin SFT'si çalışır ama yükleyici AutoProcessor ister ve
-    # görüntü kulesi de bellekte yer kaplar.
+    # kullanır ama metin SFT'si için AutoProcessor GEREKMEZ: transformers'ta
+    # ``Qwen3_5ForCausalLM._keys_to_ignore_on_load_unexpected`` hem ``^mtp.*``
+    # hem ``^model.visual.*`` kalıbını taşır; görüntü kulesi ağırlıkları
+    # yüklenirken yok sayılır. Yani ``AutoModelForCausalLM`` + ``AutoTokenizer``
+    # metin yolu yeterlidir (kaynak: transformers
+    # ``models/qwen3_5/modeling_qwen3_5.py``, 2026-10-25). Bu bir *kod okuma*
+    # bulgusudur; gerçek checkpoint üzerinde doğrulaması Kaggle koşusunun ilk
+    # adımıdır (yükleme logunda ``model.visual.*`` "unexpected key" görünür).
     "Qwen/Qwen3.5-9B": {
         "params": 9.0e9,
         "active_params": 9.0e9,
@@ -64,8 +70,9 @@ KNOWN_MODELS: dict[str, dict[str, Any]] = {
         "source": "huggingface.co/api/models/Qwen/Qwen3.5-9B (2026-10-25)",
     },
     "Qwen/Qwen3.5-4B": {
-        "params": 4.0e9,
-        "active_params": 4.0e9,
+        # safetensors toplamı: 4_659_865_088 (BF16); HF depolama ≈9,33 GB
+        "params": 4.66e9,
+        "active_params": 4.66e9,
         "architecture": "Qwen3_5ForConditionalGeneration (görüntü+metin)",
         "native_format": "bf16",
         "gated": False,
@@ -671,6 +678,35 @@ def check_environment(
                         SEVERITY_WARNING,
                         f"Tahmini gereksinim ≈{est.total_gb} GB, GPU {single} GB: sınırda.",
                         "max_seq_len / batch size düşürün veya gradient checkpointing açık tutun.",
+                    )
+                )
+
+        # indirme boyutu vs boş disk: bf16 ağırlıklar ≈ 2 bayt/parametre.
+        # VRAM hesabı tek başına yetmiyor: Kaggle'da 20 GB disk, 14B'nin 29,6 GB
+        # bf16 indirmesini zaten alamaz (2026-10-25'te fark edilen tuzak).
+        if hardware.disk_free_gb:
+            download_gb = params * 2 / 1e9
+            if download_gb > hardware.disk_free_gb:
+                add(
+                    Finding(
+                        "weights-disk-insufficient",
+                        SEVERITY_BLOCKING,
+                        f"Taban ağırlıkları bf16 ≈{download_gb:.1f} GB, boş disk "
+                        f"{hardware.disk_free_gb:.1f} GB: indirme tamamlanamaz.",
+                        "Daha küçük taban seçin, hazır 4-bit bir depo kullanın veya "
+                        "HF_HOME'u daha büyük bir diske taşıyın. Bu denetim yalnızca "
+                        "çalışma dizininin diskini ölçer.",
+                    )
+                )
+            elif download_gb > hardware.disk_free_gb * 0.8:
+                add(
+                    Finding(
+                        "weights-disk-tight",
+                        SEVERITY_WARNING,
+                        f"Taban ağırlıkları bf16 ≈{download_gb:.1f} GB, boş disk "
+                        f"{hardware.disk_free_gb:.1f} GB: sınırda (adaptör, log ve "
+                        "llama.cpp kopyası için pay kalmıyor).",
+                        "max_seq_len'i düşürün, ara çıktıları silin veya daha küçük tabana geçin.",
                     )
                 )
 
