@@ -188,6 +188,41 @@ füzyonlu kayıp **varsayılan olarak kapalı** (`--unsloth-fused-loss` ile aç�
 
 ---
 
+## 3.7 Üçüncü hata: bayat kod (`No module named 'gokturk.lora_gguf'`)
+
+**Belirti:** eğitim başarılı, `logcheck` "DİKKAT" dedi, sonra **son hücrede**
+`ModuleNotFoundError: No module named 'gokturk.lora_gguf'` ve notebook düştü;
+artefakt zip'i hiç üretilmedi.
+
+**Sebep:** Kaggle oturumundaki klon, `lora_gguf` main'e birleşmeden önce
+alınmıştı. Hücre `git pull --ff-only` deniyordu; dal uyuşmayınca sessizce eski
+kodda kalıyordu.
+
+**Düzeltmeler (artık varsayılan):**
+
+* `REPO_BRANCH = "main"` + `git fetch --depth 1` + `git checkout -B` +
+  **`git reset --hard FETCH_HEAD`** → her koşuda en son commit.
+* Hücre, beklenen dosyaları (`configs/training_qwen3_5_4b_t4.yaml`,
+  `src/gokturk/lora_gguf.py`, `src/gokturk/serve.py`) kontrol eder ve eksikse
+  **ekrana yazar** ("bu kopyada eksik yetenekler").
+* `git pull` sonrası eski modüller bellekte kalmasın diye `sys.modules`'dan
+  `gokturk*` temizlenir.
+* **İsteğe bağlı hücreler artık ölümcül değil:** yükleme/GGUF blokları kendi
+  `ImportError`/hata yakalamasını yapıyor; başarısız olsalar da eğitim çıktıları
+  ve artefakt korunur.
+
+**Kural:** bir notebook'ta isteğe bağlı bir adım, zorunlu bir adımın çıktısını
+çöpe atamamalı.
+
+### Epoch patlaması artık işaretleniyor
+
+`logcheck`, manifestte `epoch > 5` görürse `epoch-explosion` bulgusu üretir:
+4 örnekle 60 adım = 60 epoch → kayıp düşer, eval kaybı yükselir (ezberleme).
+Doğru formül: `adım = örnek × epoch / (batch × grad_accum)`; 9.000 örnekte
+600–1200 adım normaldir.
+
+---
+
 ## 4. 60 adımlık ölçüm koşusu
 
 ```bash

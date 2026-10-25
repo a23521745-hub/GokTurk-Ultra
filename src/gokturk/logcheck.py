@@ -540,6 +540,22 @@ def analyze_manifest(data: dict[str, Any], source: str = "") -> dict[str, Any]:
                 )
             )
 
+    # Epoch patlaması: 4 örnekle 60 adım = 60 epoch. Kayıp düşer, eval kaybı
+    # yükselir; bu "öğrendi" değil "ezberledi" demektir (2026-10-25 Kaggle koşusu).
+    epoch = metrics.get("epoch")
+    if isinstance(epoch, (int, float)) and epoch > 5:
+        findings.append(
+            Finding(
+                "epoch-explosion",
+                WARN,
+                f"Eğitim {epoch:g} epoch sürdü — bu bir ezberleme reçetesidir.",
+                ([f"train_loss={loss:g}"] if isinstance(loss, (int, float)) else []),
+                "Gerçek koşuda 1–2 epoch yeterlidir: adım = örnek sayısı × epoch / "
+                "(batch × grad_accum). 9.000 örnekte ~600–1200 adım normaldir; "
+                "60 adımı 4 örnekle çalıştırmak modeli 4 cümleye kilitler.",
+            )
+        )
+
     train_examples = (data.get("data") or {}).get("train_examples")
     if isinstance(train_examples, int) and train_examples < 50:
         findings.append(
