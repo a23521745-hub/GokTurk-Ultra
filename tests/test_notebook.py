@@ -141,11 +141,12 @@ def test_production_runbook_is_linked(notebook):
 # 2026-10-26 olayı: ağ tanısı, sıfır-verim sigortası, ilerleme günlüğü
 # ---------------------------------------------------------------------------
 def test_notebook_diagnoses_network_before_generating(notebook):
+    """Tanı mantığı artık paylaşılan `diagnose_endpoint` içinde (test: test_teachers)."""
     text = "".join("".join(c["source"]) for c in notebook["cells"])
-    assert "gethostbyname" in text, "DNS tanısı olmadan 6 saat boşa gidebilir"
-    assert "create_connection" in text
-    assert "evren-llmapi.ssyz.org.tr" in text
+    assert "diagnose_endpoint" in text, "DNS tanısı olmadan 6 saat boşa gidebilir"
     assert "NET_OK" in text
+    library = (ROOT / "src" / "gokturk" / "teachers.py").read_text(encoding="utf-8")
+    assert "getaddrinfo" in library and "create_connection" in library
 
 
 def test_notebook_stops_on_zero_yield(notebook):
@@ -187,3 +188,51 @@ def test_incident_report_states_the_remaining_limits():
     assert "DNS sorunu çözülmedi" in body
     assert "hâlâ tahmin" in body
     assert "gerçek uç nokta doğrulaması yapılmadı" in body
+
+
+# ---------------------------------------------------------------------------
+# 3b olayı: yanlış teşhis ("anahtar yok") bir daha basılmamalı
+# ---------------------------------------------------------------------------
+def _cell_with(needle: str) -> str:
+    notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    for cell in notebook["cells"]:
+        if cell["cell_type"] == "code" and needle in "".join(cell["source"]):
+            return "".join(cell["source"])
+    raise AssertionError(f"hücre bulunamadı: {needle}")
+
+
+def test_cell_3b_no_longer_blames_the_api_key_unconditionally():
+    source = _cell_with("list_models")
+    assert "describe_error" in source, "teşhis hatanın türüne göre üretilmeli"
+    # Koşulsuz suçlama cümlesi kalkmalı: 2026-10-26'da anahtar VARDI, sorun DNS'ti.
+    # (Metin yalnızca olayı anlatan YORUMDA kalabilir; bir print() içinde olamaz.)
+    printed = [line for line in source.splitlines() if line.lstrip().startswith("print(")]
+    assert not any("En sık sebep: EVREN_API_KEY" in line for line in printed)
+    # "Anahtar yok" yalnızca gerçekten yoksa (diagnose_endpoint.key_present) yazılır.
+    assert "elif not _diag.key_present:" in source
+    assert source.index("elif not _diag.key_present:") < source.index("Anahtar yok")
+
+
+def test_cell_3b_diagnoses_network_before_requesting_models():
+    source = _cell_with("list_models")
+    assert "diagnose_endpoint" in source
+    assert source.index("diagnose_endpoint") < source.index("list_models()")
+
+
+def test_cell_3b_is_declared_optional():
+    source = _cell_with("list_models")
+    assert "OPSİYONEL" in source
+
+
+def test_cell_6b_uses_shared_diagnosis_instead_of_hand_rolled_sockets():
+    source = _cell_with("RUN_GENERATION")
+    assert "diagnose_endpoint" in source, "tanı mantığı tek yerde olmalı"
+    assert "gethostbyname" not in source
+    assert "create_connection" not in source
+
+
+def test_incident_report_covers_the_3b_misdiagnosis():
+    body = (ROOT / "docs" / "uretim-olay-2026-10-26.md").read_text(encoding="utf-8")
+    assert "3b hücresi yanlış yeri suçladı" in body
+    for needle in ("TeacherDnsError", "list_models", "diagnose_endpoint", "describe_error"):
+        assert needle in body, f"3b bölümünde eksik: {needle}"

@@ -63,6 +63,32 @@ uyarısı bunun habercisiydi ve görmezden gelindi.
 | 6 | `finish_reason` `length` değilse `reasoning_content`/`reasoning` alanı içerik olarak kabul edilir | `src/gokturk/teachers.py` |
 | 7 | Config: `timeout_s 180→120`, `max_attempts_per_sample 3→2`, `max_tokens 2048→4096` | `configs/teachers.yaml` |
 | 8 | Notebook **6a** tek çağrılık ölçüm (2 dk), **6b** DNS+TCP tanısı, `progress.log`, `abort_reason` çıktısı | `notebooks/kaggle_training.ipynb` |
+| 9 | `TeacherDnsError`: `gaierror` artık timeout değil, ayrı tip (retryable kalır) | `src/gokturk/teachers.py` |
+| 10 | `list_models` retry'lı (`chat` ile aynı politika); 401/403 tekrar denenmez | `src/gokturk/teachers.py` |
+| 11 | `diagnose_endpoint()` (DNS×3 + TCP + anahtar, enjekte edilebilir I/O) ve `describe_error()` (tür bazlı Türkçe teşhis) | `src/gokturk/teachers.py` |
+| 12 | 3b hücresi: önce tanı, sonra liste; koşulsuz "anahtar yok" cümlesi kaldırıldı; hücrenin opsiyonel olduğu yazılı | `notebooks/kaggle_training.ipynb` |
+| 13 | 6b hücresi elle yazılmış socket tanısı yerine `diagnose_endpoint()` kullanır (tek kaynak) | `notebooks/kaggle_training.ipynb` |
+
+### 2.4 3b hücresi yanlış yeri suçladı
+
+Aynı gece 3b hücresi şunu yazdı:
+
+```
+Model listesi alınamadı: TeacherTimeoutError connection error: [Errno -3] Temporary failure in name resolution
+En sık sebep: EVREN_API_KEY tanımlı değil (Add-ons > Secrets > Attach).
+```
+
+Anahtar **tanımlıydı** (log: `EVREN_API_KEY TANIMLI`). Üç kusur:
+
+1. **Tek `except TeacherError` dalı:** `TeacherConfigError` (gerçekten anahtar yok),
+   `TeacherAuthError` (401) ve `TeacherTimeoutError` (DNS) aynı yere düşüyordu; altına
+   koşulsuz "anahtar yok" cümlesi basılıyordu.
+2. **DNS, timeout olarak sınıflanıyordu:** `urllib.error.URLError(DNS)` →
+   `TeacherTimeoutError("connection error: ...")`. İkisi farklı müdahale gerektirir.
+3. **`list_models` tek deneme yapıyordu:** tek bir DNS sıçraması hücreyi düşürüyordu.
+
+Düzeltmeler (bkz. §3 tablo, satır 8–11): `TeacherDnsError` ayrı tip, `list_models`
+retry, `diagnose_endpoint()`, `describe_error()` ve hücrede tür bazlı teşhis.
 
 ## 4. Aynı hata tekrar ederse ne olacak
 
@@ -84,6 +110,8 @@ kaldırmaz. Açıkça:
   hâlâ olabilir. Değişen şey, artık üretim başlamadan (≈10 sn) görülmesi ve
   saatlerce boşa dönülmemesi. Kaynağı bizde olmayan bir ağ sorununu "düzeltmek"
   yerine "erken tespit" ediyoruz — kabul edilebilir bir trade-off.
+  Retry'lar tek sıçramayı atlatır; **aralıklı** bozulma sürerse oturumu yeniden
+  başlatmak dışında yapabileceğimiz bir şey yok (uç nokta dışarıdan sağlam).
 * **`timeout_s: 120` hâlâ tahmin.** 180→120 indirimi ölçüme değil, "120 sn meşru
   bir yanıt için fazlasıyla yeterli" gerekçesine dayanıyor. **6a hücresi bunu da
   doğrular**: gerçek gecikmeleri saniye cinsinden yazar.

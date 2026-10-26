@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -97,6 +98,18 @@ class TeacherTruncatedResponseError(TeacherEmptyResponseError):
     def __init__(self, message: str, *, finish_reason: str | None = None) -> None:
         super().__init__(message)
         self.finish_reason = finish_reason
+
+
+class TeacherDnsError(TeacherTimeoutError):
+    """The host could not be resolved (``gaierror``).
+
+    Subclass of :class:`TeacherTimeoutError` on purpose: it stays retryable, but
+    the *diagnosis* is different. A resolver hiccup and a slow model need
+    different actions, and until 2026-10-26 both were reported as
+    "timeout ... connection error: [Errno -3] Temporary failure in name
+    resolution", which sent the reader looking for the wrong cause (and the
+    notebook even blamed a missing API key).
+    """
 
 
 class TeacherUnavailableError(TeacherError):
@@ -227,13 +240,19 @@ class TeacherClient:
             "detail": f"model={resp.model} latency={resp.latency_s:.2f}s",
         }
 
-    def list_models(self, *, timeout: float | None = None) -> list[str]:
+    def list_models(
+        self, *, timeout: float | None = None, max_attempts: int | None = None
+    ) -> list[str]:
         """Return the model ids the provider itself advertises (``GET /models``).
 
         This is the only supported way to learn a model id: the caller reads
         what the server reports instead of trusting a hard-coded guess. Raises
         :class:`TeacherConfigError` when the configuration or the key is
         missing, and the usual HTTP taxonomy otherwise.
+
+        Retries like :meth:`chat` does: one DNS hiccup must not fail the whole
+        cell. On 2026-10-26 a single resolution failure made the notebook print
+        "model list could not be fetched" and then blame the API key.
         """
         provider = self.provider
         if not provider.base_url:
@@ -245,9 +264,31 @@ class TeacherClient:
         except ConfigError as exc:
             raise TeacherConfigError(str(exc)) from exc
         url = provider.base_url.rstrip("/") + "/models"
-        self._limiter.wait()
-        raw = self._get_transport(url, api_key, timeout or provider.timeout_s)
-        return _extract_model_ids(raw)
+        attempts_allowed = max_attempts or max(2, provider.max_attempts_per_sample)
+        last_error: TeacherError | None = None
+        for attempt in range(1, attempts_allowed + 1):
+            self._limiter.wait()
+            try:
+                raw = self._get_transport(url, api_key, timeout or provider.timeout_s)
+            except (TeacherAuthError, TeacherConfigError, TeacherRequestError):
+                raise
+            except RETRYABLE_ERRORS as exc:
+                last_error = exc
+                LOGGER.warning(
+                    "model listesi alınamadı (deneme %d/%d): %s: %s",
+                    attempt,
+                    attempts_allowed,
+                    type(exc).__name__,
+                    exc,
+                )
+                if attempt < attempts_allowed:
+                    self._sleep(self._backoff(attempt))
+                continue
+            return _extract_model_ids(raw)
+        raise TeacherUnavailableError(
+            f"model listesi {attempt} denemede alınamadı; son hata: "
+            f"{type(last_error).__name__}: {last_error}"
+        ) from last_error
 
     def chat(
         self,
@@ -354,7 +395,7 @@ class TeacherClient:
         raise TeacherUnavailableError(
             f"model {model!r} failed after {attempt} attempts; "
             f"last error: {type(last_error).__name__}: {last_error}"
-        )
+        ) from last_error
 
     # -- internals ---------------------------------------------------------
     def _backoff(self, attempt: int) -> float:
@@ -386,8 +427,10 @@ class TeacherClient:
             raise _classify_http_error(exc.code, body) from exc
         except TimeoutError as exc:
             raise TeacherTimeoutError(f"timeout after {timeout}s: {exc}") from exc
+        except socket.gaierror as exc:
+            raise TeacherDnsError(f"DNS resolution failed: {exc}") from exc
         except urllib.error.URLError as exc:
-            raise TeacherTimeoutError(f"connection error: {exc.reason}") from exc
+            raise _classify_connection_error(exc, timeout) from exc
 
         try:
             parsed = json.loads(body)
@@ -421,8 +464,10 @@ class TeacherClient:
             raise _classify_http_error(exc.code, body) from exc
         except TimeoutError as exc:
             raise TeacherTimeoutError(f"timeout after {timeout}s: {exc}") from exc
+        except socket.gaierror as exc:
+            raise TeacherDnsError(f"DNS resolution failed: {exc}") from exc
         except urllib.error.URLError as exc:
-            raise TeacherTimeoutError(f"connection error: {exc.reason}") from exc
+            raise _classify_connection_error(exc, timeout) from exc
 
         try:
             parsed = json.loads(body)
@@ -489,6 +534,229 @@ class TeacherClient:
         return content.strip(), dict(usage), (
             finish_reason if isinstance(finish_reason, str) else None
         )
+
+
+_DNS_MARKERS = (
+    "name resolution",
+    "name or service not known",
+    "nodename nor servname",
+    "no address associated with hostname",
+    "temporary failure in name resolution",
+    "getaddrinfo failed",
+)
+
+
+def _is_dns_error(exc: BaseException | None) -> bool:
+    """True when *exc* (or its ``reason``) is a DNS resolution failure."""
+    if exc is None:
+        return False
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, socket.gaierror):
+            return True
+        text = str(current).casefold()
+        if any(marker in text for marker in _DNS_MARKERS):
+            return True
+        nxt = getattr(current, "reason", None)
+        current = nxt if isinstance(nxt, BaseException) else None
+    return False
+
+
+#: Türkçe, eyleme dönük teşhis metinleri: hata tipini doğru adlandırmak,
+#: yanlış yeri kurcalamayı önler (2026-10-26: DNS hatası "anahtar yok" sanıldı).
+def describe_error(exc: BaseException | None) -> str:
+    """One-line diagnosis for a teacher failure, walking the ``__cause__`` chain."""
+    if exc is None:
+        return "bilinmeyen hata"
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        nxt = current.__cause__ or current.__context__
+        current = nxt if isinstance(nxt, BaseException) else None
+    kinds = {type(item) for item in chain}
+
+    if TeacherDnsError in kinds or any(_is_dns_error(item) for item in chain):
+        return (
+            "DNS: ad çözümlenemedi (resolver). API anahtarı veya model kimliği sorunu DEĞİL. "
+            "Aynı isteği tekrar deneyin; sık tekrarlarsa oturumu yeniden başlatın."
+        )
+    if TeacherAuthError in kinds:
+        return "401/403: anahtar geçersiz veya süresi geçmiş. Secrets'taki değeri yenileyin."
+    if TeacherConfigError in kinds:
+        return "Yapılandırma eksik (base_url/anahtar değişkeni). configs/teachers.yaml."
+    if TeacherRateLimitError in kinds:
+        return "429: oran sınırı. requests_per_minute düşürün veya bekleyin."
+    if TeacherServerError in kinds:
+        return "5xx: sağlayıcı tarafındaki hata. Birkaç dakika sonra tekrar deneyin."
+    if TeacherTruncatedResponseError in kinds:
+        return (
+            "Yanıt token bütçesinde kesildi (finish_reason=length): max_tokens yetersiz."
+            " configs/teachers.yaml içinde yükseltin."
+        )
+    if TeacherEmptyResponseError in kinds:
+        return "Boş yanıt: sağlayıcı 200 döndü ama içerik yok. Tekrar deneyin."
+    if TeacherTimeoutError in kinds:
+        return "Zaman aşımı: istek süresi doldu. timeout_s değerini ölçerek artırın."
+    return f"{type(exc).__name__}: {exc}"
+
+
+@dataclass
+class EndpointDiagnosis:
+    """Result of :func:`diagnose_endpoint` -- facts, not guesses."""
+
+    host: str
+    port: int
+    addresses: list[str] = field(default_factory=list)
+    dns_attempts: int = 0
+    dns_failures: int = 0
+    dns_error: str | None = None
+    tcp_ok: bool = False
+    tcp_error: str | None = None
+    key_present: bool = False
+
+    @property
+    def dns_ok(self) -> bool:
+        return bool(self.addresses)
+
+    @property
+    def dns_intermittent(self) -> bool:
+        """True when some resolutions worked and some failed."""
+        return bool(self.addresses) and self.dns_failures > 0
+
+    @property
+    def ok(self) -> bool:
+        return self.dns_ok and self.tcp_ok and self.key_present
+
+    def render(self) -> str:
+        lines = [f"Uç nokta tanısı: {self.host}:{self.port}"]
+        if self.dns_ok:
+            lines.append(f"  DNS  : ÇÖZÜLDÜ -> {', '.join(self.addresses)}")
+        else:
+            lines.append(f"  DNS  : BAŞARISIZ ({self.dns_error or 'bilinmeyen'})")
+        if self.dns_attempts:
+            lines.append(
+                f"  DNS  : {self.dns_attempts} denemede {self.dns_failures} başarısız"
+                + ("  <-- ARALIKLI (resolver kararsız)" if self.dns_intermittent else "")
+            )
+        if not self.dns_ok:
+            lines.append("  TCP  : denenmedi (ad çözümlenemedi)")
+        elif self.tcp_ok:
+            lines.append("  TCP  : AÇIK")
+        else:
+            lines.append(f"  TCP  : BAŞARISIZ ({self.tcp_error})")
+        lines.append(f"  ANAHTAR: {'VAR' if self.key_present else 'YOK'}")
+        if not self.dns_ok:
+            lines.append(
+                "  YORUM: Bu bir API anahtarı sorunu DEĞİL. Ad çözümlemesi (DNS) düşüyor;"
+                " anahtarı kontrol etmek zaman kaybıdır."
+            )
+        elif self.dns_intermittent:
+            lines.append(
+                "  YORUM: DNS ARALIKLI bozuk: bazı sorgular çözüldü, bazıları düşmedi."
+                " Retry'lar tek bir sıçramayı atlatır; sık tekrarlarsa oturumu yeniden"
+                " başlatın (bozulma Kaggle resolver'ına özgü olabiliyor)."
+            )
+        elif not self.tcp_ok:
+            lines.append(
+                "  YORUM: Ad çözümlendi ama TCP açılmıyor: güvenlik duvarı/port veya"
+                " uç nokta kapalı. Internet açık mı?"
+            )
+        elif not self.key_present:
+            lines.append(
+                "  YORUM: Ağ sağlam; eksik olan EVREN_API_KEY"
+                " (Add-ons > Secrets > Attach)."
+            )
+        return "\n".join(lines)
+
+
+def _default_resolver(host: str) -> list[str]:
+    infos = socket.getaddrinfo(host, 443, family=socket.AF_INET, type=socket.SOCK_STREAM)
+    return sorted({str(info[4][0]) for info in infos})
+
+
+def diagnose_endpoint(
+    provider,
+    *,
+    resolver=None,
+    connect=None,
+    attempts: int = 3,
+    timeout: float = 8.0,
+    sleep=None,
+    pause_s: float = 0.5,
+) -> EndpointDiagnosis:
+    """Check DNS, TCP and key presence *before* spending hours on generation.
+
+    2026-10-26: the run spent 5,7 hours and produced nothing, while the very first
+    minute already showed "Temporary failure in name resolution". This function
+    turns that signal into an explicit, actionable diagnosis.
+
+    All I/O is injectable (``resolver``/``connect``/``sleep``) so it is testable
+    without a network.
+    """
+    url = str(getattr(provider, "base_url", "") or "")
+    host = ""
+    if "://" in url:
+        host = url.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
+    port = 443
+    diagnosis = EndpointDiagnosis(
+        host=host,
+        port=port,
+        key_present=bool(getattr(provider, "api_key", lambda: None)()),
+    )
+    if not host:
+        diagnosis.dns_error = "provider.base_url boş"
+        return diagnosis
+
+    resolve = resolver or _default_resolver
+    wait = sleep or time.sleep
+    for attempt in range(1, max(1, attempts) + 1):
+        diagnosis.dns_attempts = attempt
+        try:
+            found = [str(a) for a in resolve(host) if a]
+        except Exception as exc:  # gaierror, hermetik test hataları, ...
+            diagnosis.dns_failures += 1
+            diagnosis.dns_error = f"{type(exc).__name__}: {exc}"
+            if attempt < attempts:
+                wait(pause_s)
+            continue
+        if not found:
+            diagnosis.dns_failures += 1
+            diagnosis.dns_error = "boş yanıt (ad yok)"
+            if attempt < attempts:
+                wait(pause_s)
+            continue
+        diagnosis.addresses = found
+        diagnosis.dns_error = None
+        break
+
+    if not diagnosis.dns_ok:
+        return diagnosis
+
+    opener = connect or (lambda address, **kw: socket.create_connection(address, **kw))
+    try:
+        sock = opener((diagnosis.addresses[0], port), timeout=timeout)
+        closer = getattr(sock, "close", None)
+        if callable(closer):
+            closer()
+        diagnosis.tcp_ok = True
+    except Exception as exc:
+        diagnosis.tcp_error = f"{type(exc).__name__}: {exc}"
+    return diagnosis
+
+
+def _classify_connection_error(exc: urllib.error.URLError, timeout: float) -> TeacherError:
+    """Map a URLError onto the right error type instead of calling everything a timeout."""
+    if _is_dns_error(exc):
+        return TeacherDnsError(
+            f"DNS resolution failed for {getattr(exc, 'filename', '') or 'the endpoint'}: "
+            f"{exc.reason}. Bu bir zaman aşımı DEĞİL: ad çözümlenemedi (resolver/Kaggle ağı)."
+        )
+    return TeacherTimeoutError(f"connection error: {exc.reason}")
 
 
 def _classify_http_error(status: int, body: str) -> TeacherError:
