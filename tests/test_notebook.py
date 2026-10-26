@@ -247,3 +247,13 @@ def test_teacher_probe_does_not_depend_on_a_later_cell():
     assert "diagnose_endpoint" in source
     assert "escalate_truncation=False" in source, "ölçüm yükseltmeyi kapatmalı"
     assert "128" in source and "512" in source
+
+
+def test_probe_warns_when_any_teacher_has_no_content():
+    import json
+    from pathlib import Path
+
+    notebook = json.loads((Path(__file__).resolve().parents[1] / "notebooks" / "kaggle_training.ipynb").read_text())
+    probe = next("".join(c["source"]) for c in notebook["cells"]
+                 if c["cell_type"] == "code" and "PING_BUDGETS =" in "".join(c["source"]))
+    assert "if len(verdict) != len(teachers.teachers):" in probe

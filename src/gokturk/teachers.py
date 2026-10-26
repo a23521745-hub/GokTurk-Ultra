@@ -411,12 +411,14 @@ class TeacherClient:
                         "yükseltilmiyor (finish_reason=length)",
                         model,
                     )
+                    break
                 else:
                     LOGGER.warning(
                         "model %s: max_tokens %d bile yetmedi (finish_reason=length)",
                         model,
                         current_max_tokens,
                     )
+                    break
                 continue
             return TeacherResponse(
                 text=text,

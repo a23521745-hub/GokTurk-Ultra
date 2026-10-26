@@ -790,3 +790,12 @@ def test_incident_doc_covers_the_health_check_storm():
     )
     for needle in ("2.5 Sağlık denetimi", "HEALTH_CHECK_MAX_TOKENS", "escalate_truncation"):
         assert needle in body, f"olay raporunda eksik: {needle}"
+
+
+def test_truncation_does_not_spend_remaining_transport_retries(provider, monkeypatch):
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(provider, [_truncated_payload()] * 6)
+    with pytest.raises(TeacherUnavailableError):
+        client.chat("m", messages=[{"role": "user", "content": "s"}],
+                    max_tokens=8, max_attempts=5)
+    assert [c["payload"]["max_tokens"] for c in transport.calls] == [8, 16]
