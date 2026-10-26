@@ -1,0 +1,80 @@
+# GökTürk-Ultra — Qwen3.5-4B, CoT verisiyle (Kaggle T4, 4-bit QLoRA)
+# ---------------------------------------------------------------------------
+# NE FARKLI
+#   Taban ve donanım aynı (training_qwen3_5_4b_t4.yaml). Farklar:
+#   * Hedef yanıt ARTIK düşünme zincirini de içeriyor
+#     ("thinking_process" + "\n\n" + nihai yanıt) -> `gokturk.cot_dataset`
+#     bu dönüşümü yapar.
+#   * Veri: data/datasets/evren_cot_10k.jsonl (10.000 satır) tekilleştirilip
+#     kalite kapısından geçirilir; ~1.300 örnek kalır (bkz. docs/veri-seti-hazirlama.md).
+#   * Adım sayısı veri boyutundan hesaplanır, sabit 60 değil.
+#
+# ÖNEMLİ — GERÇEKÇİ BEKLENTİ
+#   Bu dosyadaki 10.000 satır, 920 tekil talimatın ~11 kez tekrarıdır
+#   (ölçüldü: 2026-10-25). Tekilleştirme sonrası ~1.300 örnek kalıyor; bu bir
+#   "10k veri seti" DEĞİL. 1.300 örnekle 4B model genel Türkçe talimat takibi
+#   öğrenmez; öğrendiği şey bu 920 talimat ailesinin üslubu olur.
+#   Çeşitlilik EVREN üretimiyle (python -m gokturk.data_generation --mode pro)
+#   artırılmalıdır; o zaman bu config aynı kalır, yalnızca processed dosyalar büyür.
+# ---------------------------------------------------------------------------
+
+model:
+  name_or_path: Qwen/Qwen3.5-4B
+  dtype: auto            # T4 bf16 desteklemez -> fp16
+  load_in_4bit: true     # NF4 QLoRA
+  unsloth_4bit: false
+  trust_remote_code: false
+  attn_implementation: sdpa
+
+quantization:
+  method: nf4
+  double_quant: true
+  compute_dtype: auto
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  # llama.cpp dönüştürücüsüyle uyumlu: embed_tokens/lm_head YOK.
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  bias: none
+
+data:
+  train_file: data/processed/train.jsonl
+  eval_file: data/processed/valid.jsonl
+  # CoT hedefi uzundur (medyan ~742 karakter ≈ 250 token) + istem ≈ 20 token.
+  # 1024 güvenli; 2048'e çıkmadan önce VRAM ölçün.
+  max_seq_len: 1024
+  prompt_field: prompt
+  response_field: response
+
+optimization:
+  method: qlora
+  epochs: 3
+  # ~1.300 tekil örnekte 3 epoch, etkin batch 16 => ~240 adım.
+  # Veri büyürse notebook bunu `gokturk.cot_dataset.training_steps_for` ile
+  # yeniden hesaplar; buradaki değer yalnızca varsayılandır.
+  max_steps: 240
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8     # etkin batch = 16
+  learning_rate: 0.0001
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  gradient_checkpointing: true
+  optim: paged_adamw_8bit
+  seed: 3407
+  logging_steps: 5
+  save_steps: 60
+  save_total_limit: 2
+  eval_steps: 60
+  report_to: none
+
+output_dir: outputs/qwen3_5-4b-cot-t4-qlora
+require_preflight_ok: true
+allow_unverified_hardware: false
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+peft: true
