@@ -179,3 +179,11 @@ def test_incident_report_is_documented_and_linked():
     assert "uretim-olay-2026-10-26.md" in (
         ROOT / "docs" / "veri-uretimi-kaggle.md"
     ).read_text(encoding="utf-8")
+
+
+def test_incident_report_states_the_remaining_limits():
+    body = (ROOT / "docs" / "uretim-olay-2026-10-26.md").read_text(encoding="utf-8")
+    # Düzeltmelerin neyi ÇÖZMEDİĞİ de yazılı olmalı.
+    assert "DNS sorunu çözülmedi" in body
+    assert "hâlâ tahmin" in body
+    assert "gerçek uç nokta doğrulaması yapılmadı" in body

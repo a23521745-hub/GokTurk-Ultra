@@ -75,6 +75,25 @@ uyarısı bunun habercisiydi ve görmezden gelindi.
 | Bir öğretmen çöktü | Diğeri denenir; 8 ardışık hatada koşu durur |
 | Uzun sürdü | `TIME_BUDGET_MIN` dolunca durur, `stop_reason=time-budget`, resume ile sürer |
 
+## 4b. Sınırlar — ne düzelmedi
+
+Bu düzeltmeler hatayı **görünür ve ucuz** hale getirir; hatanın kendisini ortadan
+kaldırmaz. Açıkça:
+
+* **DNS sorunu çözülmedi.** Kaggle tarafındaki `Temporary failure in name resolution`
+  hâlâ olabilir. Değişen şey, artık üretim başlamadan (≈10 sn) görülmesi ve
+  saatlerce boşa dönülmemesi. Kaynağı bizde olmayan bir ağ sorununu "düzeltmek"
+  yerine "erken tespit" ediyoruz — kabul edilebilir bir trade-off.
+* **`timeout_s: 120` hâlâ tahmin.** 180→120 indirimi ölçüme değil, "120 sn meşru
+  bir yanıt için fazlasıyla yeterli" gerekçesine dayanıyor. **6a hücresi bunu da
+  doğrular**: gerçek gecikmeleri saniye cinsinden yazar.
+* **460 test geçiyor ama gerçek uç nokta doğrulaması yapılmadı.** Testler sahte
+  transport'la çalışır; gerçek EVREN davranışı (token bütçesi, gecikme, DNS)
+  yalnızca 6a ile doğrulanır. Bu ortamda anahtar yok.
+
+Sıra bu yüzden sabit: **merge → notebook güncelle → 6a → 6b → 6c**. 6a'da sorun
+çıkarsa config (bu repodan) yeniden güncellenir.
+
 ## 5. Dürüst sonuç
 
 * 2026-10-26 koşusundan **hiç veri çıkmadı**; hiçbir model eğitilmedi.
