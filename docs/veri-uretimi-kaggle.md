@@ -10,7 +10,7 @@ nasıl yarıda kalıp devam ettiğini ve ne kadar sürdüğünü anlatır.
 zaman aşımları, `finish_reason='length'` ile boş yanıtlar) ve güvenlik frenleri
 tetiklenmedi. Kök nedenler ve düzeltmeler: [`uretim-olay-2026-10-26.md`](uretim-olay-2026-10-26.md).
 
-**Artık koşu başlamadan önce 6a hücresi çalıştırılır** (2 dakika): iki öğretmen için
+**Artık koşu başlamadan önce 6a hücresi çalıştırılır** (2 dakika): yapılandırılmış tek MiMo öğretmeni için
 2048/4096/8192 token bütçeleriyle tek istek atar, hangisinde içerik geldiğini
 gösterir. 6b ise ağ tanısı (DNS + TCP 443) düşerse hiç başlamaz.
 

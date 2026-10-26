@@ -799,3 +799,34 @@ def test_truncation_does_not_spend_remaining_transport_retries(provider, monkeyp
         client.chat("m", messages=[{"role": "user", "content": "s"}],
                     max_tokens=8, max_attempts=5)
     assert [c["payload"]["max_tokens"] for c in transport.calls] == [8, 16]
+
+
+@pytest.mark.parametrize("role", ["general", "reasoning", "code"])
+def test_v1_repo_pool_routes_every_role_to_mimo(role, monkeypatch):
+    from pathlib import Path
+
+    from gokturk.config import load_teachers_config
+
+    config = load_teachers_config(Path(__file__).resolve().parents[1] / "configs/teachers.yaml")
+    monkeypatch.setenv(config.provider.api_key_env, "test-key")
+    client, transport, _ = _client(config.provider, [chat_payload("Türkçe yanıt")])
+    pool = TeacherPool(config, client=client)
+    _, teacher = pool.ask_with_fallback("sistem", "istek", role=role)
+    assert teacher.name == "mimo-v26-pro"
+    assert len(transport.calls) == 1
+    assert transport.calls[0]["payload"]["model"] == "mimo-v2.6-pro"
+
+
+def test_v1_failed_mimo_does_not_call_another_model(monkeypatch):
+    from pathlib import Path
+
+    from gokturk.config import load_teachers_config
+
+    config = load_teachers_config(Path(__file__).resolve().parents[1] / "configs/teachers.yaml")
+    monkeypatch.setenv(config.provider.api_key_env, "test-key")
+    client, transport, _ = _client(config.provider, [TeacherServerError("capacity")] * 8)
+    pool = TeacherPool(config, client=client)
+    with pytest.raises(TeacherUnavailableError):
+        pool.ask_with_fallback("sistem", "istek", role="code")
+    assert transport.calls
+    assert {c["payload"]["model"] for c in transport.calls} == {"mimo-v2.6-pro"}

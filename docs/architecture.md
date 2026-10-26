@@ -73,7 +73,7 @@ seeds ──> drafter (öğretmen) ──> prompt ──> solver (öğretmen) �
   plan yazdırır). Hiçbir endpoint veya model kimliği uydurulmamıştır.
 - Repoda gelen değerler **doğrulanmıştır** (2026-10-25):
   `https://evren-llmapi.ssyz.org.tr/v1` (kimliksiz GET, sağlayıcının kendi
-  `API anahtarı eksik` yanıtını döndürdü), `mimo-v2.6-pro` ve `glm-5.3`
+  `API anahtarı eksik` yanıtını döndürdü), `mimo-v2.6-pro`
   (EVREN'in model filosu sayfası + bağımsız istemcilerin model listeleri).
 - Kimlikler koda gömülü bir varsayım değil, **çalışma anında doğrulanabilir**
   bir iddiadır: `python -m gokturk.data_generation --list-models` sağlayıcının

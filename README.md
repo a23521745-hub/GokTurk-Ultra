@@ -156,10 +156,10 @@ python -m gokturk.data_generation --per-seed 1 \
   --out data/raw/generated.jsonl
 ```
 
-- Öğretmen çifti: **MiMo-V2.6-Pro** (`mimo-v2.6-pro`, akıl yürütme/genel) +
-  **GLM-5.3** (`glm-5.3`, kod/araç çağırma). Kimi-K3 elendi: EVREN filosunda
-  Kimi yok.
-- `configs/teachers.yaml` içindeki `base_url`, `mimo-v2.6-pro` ve `glm-5.3`
+- V1 tek öğretmen: **MiMo-V2.6-Pro** (`mimo-v2.6-pro`). Genel, kod ve
+  reasoning yönlendirme rolleri aynı modele gider; aday ve eleştiri bağımsız
+  modellerden gelmez. GLM, V1 kapsamını sadeleştirme kararıyla çıkarıldı.
+- `configs/teachers.yaml` içindeki `base_url` ve `mimo-v2.6-pro`
   **doğrulanmış** değerlerdir (kaynak ve tarih dosyanın başında yazılı).
   Kimlikler değişirse tahmin edilmez: `--list-models` sağlayıcının kendi
   listesini alır, karşılaştırır ve eksik varsa çıkış kodu 2 ile durur.
