@@ -44,6 +44,10 @@ LOGGER = logging.getLogger(__name__)
 
 _USER_AGENT = "GokTurk-Ultra/0.1 (+data-generation)"
 
+#: Reasoning modelleri bütçeyi düşünme zincirinde harcayıp boş ``content``
+#: döndürebilir; bu durumda bir kez bu sınıra kadar yükseltilir.
+MAX_ESCALATED_TOKENS = 8192
+
 
 # ---------------------------------------------------------------------------
 # errors
@@ -80,15 +84,35 @@ class TeacherEmptyResponseError(TeacherError):
     """HTTP 200 with no usable content. Retryable, but never accepted as data."""
 
 
+class TeacherTruncatedResponseError(TeacherEmptyResponseError):
+    """The model stopped at the token limit before writing any answer.
+
+    ``finish_reason="length"`` with an empty ``content`` means the whole budget
+    was spent inside the reasoning trace. Retrying with the *same* budget is
+    deterministic waste: 2026-10-26 Kaggle run burned 118 such retries and
+    ~14 minutes per slot. The client therefore retries **once** with a larger
+    ``max_tokens`` instead (see :meth:`TeacherClient.chat`).
+    """
+
+    def __init__(self, message: str, *, finish_reason: str | None = None) -> None:
+        super().__init__(message)
+        self.finish_reason = finish_reason
+
+
 class TeacherUnavailableError(TeacherError):
-    """Too many consecutive failures: the run must stop safely."""
+    """Every retry and every fallback teacher failed for one request."""
 
 
+#: ``TeacherUnavailableError`` belongs here: without it a failed request never
+#: triggers the fallback teacher and never increments the consecutive-failure
+#: counter, so a dead endpoint looks like "slow progress" forever instead of
+#: aborting (exactly what happened on 2026-10-26).
 RETRYABLE_ERRORS = (
     TeacherRateLimitError,
     TeacherServerError,
     TeacherTimeoutError,
     TeacherEmptyResponseError,
+    TeacherUnavailableError,
 )
 
 
@@ -260,12 +284,22 @@ class TeacherClient:
 
         url = provider.base_url.rstrip("/") + "/chat/completions"
         last_error: TeacherError | None = None
+        current_max_tokens = int(max_tokens)
+        # Deneme bütçesi normalde ``attempts_allowed``. Yalnızca yanıt boş dönerse
+        # (reasoning token bütçesini yedi) TEK bir ek deneme verilir ve o deneme
+        # daha büyük ``max_tokens`` ile yapılır: aynı parametrelerle tekrar denemek
+        # deterministik olarak aynı sonucu verir.
+        max_attempts_total = attempts_allowed
+        attempt = 0
 
-        for attempt in range(1, attempts_allowed + 1):
+        while attempt < max_attempts_total:
+            attempt += 1
+            # Yeni dict: transport kayıtları sonradan mutasyonla bozulmasın.
+            request_payload = {**payload, "max_tokens": current_max_tokens}
             self._limiter.wait()
             started = time.monotonic()
             try:
-                raw = self._transport(url, payload, api_key, provider.timeout_s)
+                raw = self._transport(url, request_payload, api_key, provider.timeout_s)
             except TeacherAuthError:
                 raise
             except TeacherRequestError:
@@ -275,7 +309,7 @@ class TeacherClient:
                 LOGGER.warning(
                     "teacher request failed (attempt %d/%d, model=%s): %s: %s",
                     attempt,
-                    attempts_allowed,
+                    max_attempts_total,
                     model,
                     type(exc).__name__,
                     exc,
@@ -285,7 +319,28 @@ class TeacherClient:
                 continue
 
             latency = time.monotonic() - started
-            text, usage, finish_reason = self._extract_content(raw, model)
+            try:
+                text, usage, finish_reason = self._extract_content(raw, model)
+            except TeacherTruncatedResponseError as exc:
+                last_error = exc
+                bigger = min(MAX_ESCALATED_TOKENS, current_max_tokens * 2)
+                if bigger > current_max_tokens:
+                    LOGGER.warning(
+                        "model %s: boş içerik (finish_reason=length), max_tokens "
+                        "%d -> %d ile bir kez daha denenecek",
+                        model,
+                        current_max_tokens,
+                        bigger,
+                    )
+                    current_max_tokens = bigger
+                    max_attempts_total += 1
+                else:
+                    LOGGER.warning(
+                        "model %s: max_tokens %d bile yetmedi (finish_reason=length)",
+                        model,
+                        current_max_tokens,
+                    )
+                continue
             return TeacherResponse(
                 text=text,
                 model=str(raw.get("model") or model),
@@ -297,7 +352,7 @@ class TeacherClient:
             )
 
         raise TeacherUnavailableError(
-            f"model {model!r} failed after {attempts_allowed} attempts; "
+            f"model {model!r} failed after {attempt} attempts; "
             f"last error: {type(last_error).__name__}: {last_error}"
         )
 
@@ -397,13 +452,40 @@ class TeacherClient:
                 if isinstance(part, Mapping) and isinstance(part.get("text"), str):
                     parts.append(part["text"])
             content = "".join(parts)
-        if not isinstance(content, str) or not content.strip():
-            raise TeacherEmptyResponseError(
-                f"empty content for model {model!r} (finish_reason="
-                f"{first.get('finish_reason')!r})"
-            )
-        usage = raw.get("usage") if isinstance(raw.get("usage"), Mapping) else {}
         finish_reason = first.get("finish_reason")
+        reasoning = ""
+        if isinstance(message, Mapping):
+            # Sağlayıcılar düşünme zincirini ayrı alanda döndürebilir.
+            for key in ("reasoning_content", "reasoning"):
+                value = message.get(key)
+                if isinstance(value, str) and value.strip():
+                    reasoning = value.strip()
+                    break
+
+        if not isinstance(content, str) or not content.strip():
+            if finish_reason == "length":
+                # Bütçe düşünme zincirinde bitti: yanıt HİÇ yazılmadı. Aynı
+                # parametrelerle tekrar denemek zaman kaybıdır (2026-10-26'da
+                # 118 kez denendi); çağıran daha büyük bütçeyle bir kez dener.
+                raise TeacherTruncatedResponseError(
+                    f"empty content for model {model!r} (finish_reason='length', "
+                    f"reasoning={'var' if reasoning else 'yok'})",
+                    finish_reason="length",
+                )
+            if reasoning:
+                LOGGER.warning(
+                    "model %s: 'content' boş, 'reasoning' alanı içerik olarak kullanılıyor "
+                    "(finish_reason=%r)",
+                    model,
+                    finish_reason,
+                )
+                content = reasoning
+            else:
+                raise TeacherEmptyResponseError(
+                    f"empty content for model {model!r} (finish_reason="
+                    f"{first.get('finish_reason')!r})"
+                )
+        usage = raw.get("usage") if isinstance(raw.get("usage"), Mapping) else {}
         return content.strip(), dict(usage), (
             finish_reason if isinstance(finish_reason, str) else None
         )

@@ -442,3 +442,99 @@ def test_cli_reports_time_budget_stop_with_resume_hint(tmp_path, monkeypatch, ca
     payload = json.loads(capsys.readouterr().out)
     assert payload["stop_reason"] == "time-budget"
     assert "resume" in payload["resume_hint"].casefold()
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-26: 5,7 saat / 0 kayıt. Abort hiç tetiklenmedi.
+# ---------------------------------------------------------------------------
+class FailingPool(ScriptedPool):
+    """Her istek TeacherUnavailableError verir (max deneme tükendi senaryosu)."""
+
+    def __init__(self, exc: Exception) -> None:
+        super().__init__()
+        self.exc = exc
+
+    def ask_with_fallback(self, *a, **k):
+        self.calls.append({"kind": "failing"})
+        raise self.exc
+
+
+def test_zero_yield_aborts_quickly_instead_of_grinding(tmp_path):
+    """Sıfır verim: her şey çalışıyor gibi ama tek kayıt kabul edilmiyor."""
+    pool = ScriptedPool(answers=[WEAK_ANSWER])
+    # 2000 slot: eski davranışta saatlerce dönerdi.
+    with pytest.raises(GenerationAborted) as excinfo:
+        _run(tmp_path, pool, target=2000, zero_yield_abort_after=3)
+
+    stats = excinfo.value.stats
+    assert stats is not None
+    assert "sıfır verim" in (stats.abort_reason or "")
+    assert stats.requested == 3, f"3 slotta durmalı, {stats.requested} denendi"
+    assert stats.accepted == 0
+
+
+def test_hard_failing_pool_aborts_within_a_few_slots(tmp_path):
+    from gokturk.teachers import TeacherUnavailableError
+
+    pool = FailingPool(TeacherUnavailableError("model 'x' failed after 2 attempts; last: 500"))
+    with pytest.raises(GenerationAborted) as excinfo:
+        _run(tmp_path, pool, target=2000, zero_yield_abort_after=3)
+
+    stats = excinfo.value.stats
+    assert stats.aborted is True
+    assert stats.requested <= 3, f"en geç 3 slotta durmalı, {stats.requested} denendi"
+
+
+def test_zero_yield_can_be_disabled(tmp_path):
+    from gokturk.teachers import TeacherUnavailableError
+
+    pool = FailingPool(TeacherUnavailableError("boom"))
+    with pytest.raises(GenerationAborted):
+        _run(tmp_path, pool, target=12, zero_yield_abort_after=0)
+    # Kapatıldığında tek koruma ardışık-hata eşiği (abort_after=3) olur.
+    assert pool.failures >= 3
+
+
+def test_unexpected_teacher_error_increments_consecutive_failure_counter(tmp_path):
+    """Yedek dal (TeacherError) sayacı artırmazsa abort eşiği asla dolmaz."""
+    from gokturk.teachers import TeacherEmptyResponseError
+
+    class OddPool(ScriptedPool):
+        def ask_with_fallback(self, *a, **k):
+            self.calls.append({"kind": "odd"})
+            raise TeacherEmptyResponseError("empty content (finish_reason='length')")
+
+    pool = OddPool()
+    with pytest.raises(GenerationAborted) as excinfo:
+        _run(tmp_path, pool, target=50, zero_yield_abort_after=0)
+
+    assert "ardışık hata" in (excinfo.value.stats.abort_reason or "")
+
+
+def test_health_check_failure_aborts_before_any_slot(tmp_path):
+    class UnhealthyPool(ScriptedPool):
+        def health_check(self):
+            return {
+                "ok": False,
+                "teachers": {"mimo": {"ok": False, "detail": "connection error: name resolution"}},
+            }
+
+    pool = UnhealthyPool()
+    with pytest.raises(GenerationAborted) as excinfo:
+        _run(tmp_path, pool, target=10)
+
+    stats = excinfo.value.stats
+    assert stats.stop_reason == "health-check-failed"
+    assert stats.requested == 0
+    assert pool.calls == [], "sağlık denetimi düşerse hiç istek atılmamalı"
+    assert "name resolution" in (stats.abort_reason or "")
+
+
+def test_healthy_pool_passes_health_check_and_generates(tmp_path):
+    class HealthyPool(ScriptedPool):
+        def health_check(self):
+            return {"ok": True, "teachers": {"mimo": {"ok": True, "detail": "ok"}}}
+
+    pool = HealthyPool()
+    stats, _out = _run(tmp_path, pool, target=2)
+    assert stats.accepted == 2

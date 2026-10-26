@@ -390,3 +390,122 @@ def test_pool_list_models_flags_missing_ids(teachers_config, http_server, monkey
     report = TeacherPool(teachers_config).list_models()
     assert report["ok"] is False
     assert report["missing"] == ["glm-test"]
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-26 Kaggle koşusu: boş yanıt, ölü uç nokta ve sessiz döngü
+# ---------------------------------------------------------------------------
+def _truncated_payload(model: str = "test-model") -> dict:
+    """Gerçek logdaki durum: finish_reason='length', content boş, reasoning dolu."""
+    return {
+        "id": "chatcmpl-trunc",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "", "reasoning_content": "düşünme..."},
+                "finish_reason": "length",
+            }
+        ],
+        "usage": {"total_tokens": 4096},
+    }
+
+
+def test_truncated_empty_content_retries_with_bigger_budget(provider, monkeypatch):
+    """Boş yanıtta aynı bütçeyle kör tekrar yok: bütçe yükseltilir."""
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(
+        provider, [_truncated_payload(), chat_payload("Gerçek yanıt")]
+    )
+
+    resp = client.chat("m", messages=[{"role": "user", "content": "soru"}], max_tokens=2048)
+
+    assert resp.text == "Gerçek yanıt"
+    assert resp.attempts == 2
+    assert transport.calls[0]["payload"]["max_tokens"] == 2048
+    assert transport.calls[1]["payload"]["max_tokens"] == 4096, "bütçe iki katına çıkmalı"
+
+
+def test_truncated_budget_is_capped(provider, monkeypatch):
+    from gokturk.teachers import MAX_ESCALATED_TOKENS
+
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(
+        provider,
+        [_truncated_payload(), _truncated_payload(), chat_payload("olmaz")],
+    )
+
+    with pytest.raises(TeacherUnavailableError):
+        client.chat(
+            "m", messages=[{"role": "user", "content": "s"}], max_tokens=6000, max_attempts=1
+        )
+
+    assert [c["payload"]["max_tokens"] for c in transport.calls] == [
+        6000,
+        MAX_ESCALATED_TOKENS,
+    ], "sınırın üstüne çıkılmamalı ve sonsuz tekrar olmamalı"
+
+
+def test_reasoning_content_is_used_when_content_is_empty_but_finished(provider, monkeypatch):
+    """finish_reason='stop' + boş content + dolu reasoning -> içerik kabul edilir."""
+    monkeypatch.setenv(provider.api_key_env, "k")
+    payload = {
+        "choices": [
+            {
+                "message": {"content": "", "reasoning_content": "Nihai cevap metni."},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {},
+    }
+    client, _transport, _ = _client(provider, [payload])
+
+    resp = client.chat("m", messages=[{"role": "user", "content": "s"}])
+
+    assert resp.text == "Nihai cevap metni."
+
+
+def test_unavailable_error_triggers_fallback_teacher(provider, monkeypatch):
+    """TeacherUnavailableError retryable olmalı; yoksa diğer öğretmen hiç denenmez."""
+    from gokturk.config import TeacherModelConfig, TeachersConfig
+    from gokturk.teachers import RETRYABLE_ERRORS
+
+    assert TeacherUnavailableError in RETRYABLE_ERRORS
+
+    monkeypatch.setenv(provider.api_key_env, "k")
+    from conftest import FakeTransport
+
+    # "bad" modeli her denemede 500 verir, "good" modeli çalışır.
+    class SwitchingTransport(FakeTransport):
+        def __call__(self, url, payload, api_key, timeout):
+            self.calls.append({"url": url, "payload": payload, "api_key": api_key, "timeout": timeout})
+            if payload["model"] == "bad":
+                from gokturk.teachers import TeacherServerError
+
+                raise TeacherServerError("500")
+            return chat_payload("iyi yanıt")
+
+    config = TeachersConfig(
+        provider=provider,
+        teachers=[
+            {"name": "bad", "model": "bad", "role": "general", "weight": 1.0},
+            {"name": "good", "model": "good", "role": "general", "weight": 1.0},
+        ],
+    )
+    config.validate()
+    client = TeacherClient(config.provider, transport=SwitchingTransport([]), sleep=lambda s: None)
+    pool = TeacherPool(config, client=client)
+    pool.pick = lambda role=None, exclude=None: (  # type: ignore[assignment]
+        next(
+            (m for m in [TeacherModelConfig(name="bad", model="bad", role="general"),
+                         TeacherModelConfig(name="good", model="good", role="general")]
+             if m.name not in (exclude or set())),
+            None,
+        ),
+        sorted(exclude or set()),
+    )
+
+    resp, teacher = pool.ask_with_fallback("sys", "user")
+
+    assert resp.text == "iyi yanıt"
+    assert teacher.name == "good", "ilk öğretmen tükendiğinde diğeri denenmeli"
