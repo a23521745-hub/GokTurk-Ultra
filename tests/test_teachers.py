@@ -720,3 +720,82 @@ def test_diagnose_endpoint_without_base_url(provider):
 
     assert result.dns_ok is False
     assert "base_url" in (result.dns_error or "")
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-26 (ikinci koşu): sağlık denetimi token fırtınası
+#   "boş içerik (finish_reason=length), max_tokens 8 -> 16 ... 64 -> 128"
+# ---------------------------------------------------------------------------
+def test_health_check_accepts_a_truncated_ping(provider, monkeypatch):
+    """Reasoning modeli ping bütçesini düşünmede harcarsa uç nokta SAĞLIKLIDIR."""
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(provider, [_truncated_payload(), _truncated_payload()])
+
+    report = client.health_check("mimo-test")
+
+    assert report["ok"] is True, "finish_reason='length' bir sağlık arızası değil"
+    assert len(transport.calls) == 1, "ping tek istek atmalı, yükseltme yapmamalı"
+
+
+def test_health_check_uses_a_budget_that_reasoning_models_can_survive(provider, monkeypatch):
+    from gokturk.teachers import HEALTH_CHECK_MAX_TOKENS
+
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(provider, [chat_payload("pong")])
+    client.health_check("mimo-test")
+
+    assert transport.calls[0]["payload"]["max_tokens"] == HEALTH_CHECK_MAX_TOKENS
+    assert HEALTH_CHECK_MAX_TOKENS >= 32, "8 token reasoning için anlamsızdı"
+
+
+def test_truncation_escalates_at_most_once(provider, monkeypatch):
+    """8->16->32->64->... tırmanışı olmamalı: en fazla iki istek."""
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(
+        provider, [_truncated_payload(), _truncated_payload(), _truncated_payload()]
+    )
+
+    with pytest.raises(TeacherUnavailableError):
+        client.chat("m", messages=[{"role": "user", "content": "s"}], max_tokens=8, max_attempts=1)
+
+    assert [c["payload"]["max_tokens"] for c in transport.calls] == [8, 16], (
+        "bütçe bir kez yükseltilir, sonra vazgeçilir"
+    )
+
+
+def test_escalation_can_be_disabled(provider, monkeypatch):
+    """Ölçüm hücresi hangi bütçenin yettiğini görmek için yükseltmeyi kapatır."""
+    from gokturk.teachers import TeacherTruncatedResponseError
+
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(provider, [_truncated_payload()])
+
+    with pytest.raises(TeacherTruncatedResponseError):
+        client.chat(
+            "m",
+            messages=[{"role": "user", "content": "s"}],
+            max_tokens=128,
+            max_attempts=1,
+            escalate_truncation=False,
+        )
+
+    assert len(transport.calls) == 1
+
+
+def test_incident_doc_covers_the_health_check_storm():
+    from pathlib import Path
+
+    body = (Path(__file__).resolve().parents[1] / "docs" / "uretim-olay-2026-10-26.md").read_text(
+        encoding="utf-8"
+    )
+    for needle in ("2.5 Sağlık denetimi", "HEALTH_CHECK_MAX_TOKENS", "escalate_truncation"):
+        assert needle in body, f"olay raporunda eksik: {needle}"
+
+
+def test_truncation_does_not_spend_remaining_transport_retries(provider, monkeypatch):
+    monkeypatch.setenv(provider.api_key_env, "k")
+    client, transport, _ = _client(provider, [_truncated_payload()] * 6)
+    with pytest.raises(TeacherUnavailableError):
+        client.chat("m", messages=[{"role": "user", "content": "s"}],
+                    max_tokens=8, max_attempts=5)
+    assert [c["payload"]["max_tokens"] for c in transport.calls] == [8, 16]

@@ -49,6 +49,11 @@ _USER_AGENT = "GokTurk-Ultra/0.1 (+data-generation)"
 #: döndürebilir; bu durumda bir kez bu sınıra kadar yükseltilir.
 MAX_ESCALATED_TOKENS = 8192
 
+#: Sağlık denetiminin ping bütçesi. "Uç nokta ayakta mı" sorusu için yeterli;
+#: reasoning modeli bunu da düşünmede harcarsa bu bir HATA değildir (bkz.
+#: :meth:`TeacherClient.health_check`).
+HEALTH_CHECK_MAX_TOKENS = 64
+
 
 # ---------------------------------------------------------------------------
 # errors
@@ -229,10 +234,25 @@ class TeacherClient:
             resp = self.chat(
                 model,
                 messages=[{"role": "user", "content": "ping"}],
-                max_tokens=8,
+                # 2026-10-26: burada 8 token vardı. Reasoning modelleri bütün
+                # bütçeyi düşünme zincirinde harcayıp boş `content` döndürdü,
+                # sağlık denetimi de her seferinde "başarısız" dedi.
+                max_tokens=HEALTH_CHECK_MAX_TOKENS,
                 temperature=0.0,
                 max_attempts=1,
+                escalate_truncation=False,
             )
+        except TeacherTruncatedResponseError:
+            # Uç nokta YANIT VERDİ: HTTP 200, geçerli `choices`, model adı doğru.
+            # Yalnızca ping bütçesi düşünme zincirine yetmedi — bu bir sağlık
+            # sorunu değil, reasoning modelinin normal davranışı.
+            return {
+                "ok": True,
+                "detail": (
+                    f"yanıt verdi (ping bütçesi {HEALTH_CHECK_MAX_TOKENS} token; "
+                    "finish_reason='length', reasoning modeli olabilir)"
+                ),
+            }
         except TeacherError as exc:
             return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
         return {
@@ -300,6 +320,7 @@ class TeacherClient:
         max_tokens: int = 2048,
         max_attempts: int | None = None,
         extra_body: Mapping[str, Any] | None = None,
+        escalate_truncation: bool = True,
     ) -> TeacherResponse:
         provider = self.provider
         if not provider.base_url:
@@ -332,6 +353,10 @@ class TeacherClient:
         # deterministik olarak aynı sonucu verir.
         max_attempts_total = attempts_allowed
         attempt = 0
+        # Bütçe yükseltmesi EN FAZLA BİR KEZ yapılır. 2026-10-26 logunda ping
+        # 8 token'la atıldığı için 8->16->32->64->128->... diye 11 denemeye
+        # tırmandı; "tek kademeli" tasarım küçük bütçelerde kontrolden çıktı.
+        escalated = False
 
         while attempt < max_attempts_total:
             attempt += 1
@@ -365,7 +390,11 @@ class TeacherClient:
             except TeacherTruncatedResponseError as exc:
                 last_error = exc
                 bigger = min(MAX_ESCALATED_TOKENS, current_max_tokens * 2)
-                if bigger > current_max_tokens:
+                if not escalate_truncation:
+                    # Yükseltme kapalı: bütçe kesilmesi deterministiktir, aynı
+                    # isteği tekrarlamak sadece zaman yakar. Çağırana söyle.
+                    raise
+                if not escalated and bigger > current_max_tokens:
                     LOGGER.warning(
                         "model %s: boş içerik (finish_reason=length), max_tokens "
                         "%d -> %d ile bir kez daha denenecek",
@@ -375,12 +404,21 @@ class TeacherClient:
                     )
                     current_max_tokens = bigger
                     max_attempts_total += 1
+                    escalated = True
+                elif bigger > current_max_tokens:
+                    LOGGER.warning(
+                        "model %s: bütçe bir kez yükseltildi, ikinci kez "
+                        "yükseltilmiyor (finish_reason=length)",
+                        model,
+                    )
+                    break
                 else:
                     LOGGER.warning(
                         "model %s: max_tokens %d bile yetmedi (finish_reason=length)",
                         model,
                         current_max_tokens,
                     )
+                    break
                 continue
             return TeacherResponse(
                 text=text,

@@ -166,7 +166,8 @@ def test_notebook_writes_a_progress_log(notebook):
 def test_notebook_has_single_call_probe(notebook):
     text = "".join("".join(c["source"]) for c in notebook["cells"])
     assert "6a) Öğretmen ölçümü" in text
-    assert "for budget in (2048, 4096, 8192)" in text
+    assert "for budget in PING_BUDGETS" in text
+    assert "PING_BUDGETS = (128, 512, 2048, 4096, 8192)" in text
 
 
 def test_incident_report_is_documented_and_linked():
@@ -236,3 +237,23 @@ def test_incident_report_covers_the_3b_misdiagnosis():
     assert "3b hücresi yanlış yeri suçladı" in body
     for needle in ("TeacherDnsError", "list_models", "diagnose_endpoint", "describe_error"):
         assert needle in body, f"3b bölümünde eksik: {needle}"
+
+
+def test_teacher_probe_does_not_depend_on_a_later_cell():
+    """6a, 6b'de tanımlanan NET_OK'a bakmamalı (2026-10-26: her zaman atlandı)."""
+    source = _cell_with("PING_BUDGETS")
+    code_lines = [ln for ln in source.splitlines() if not ln.strip().startswith("#")]
+    assert not any("NET_OK" in ln for ln in code_lines), "NET_OK bir sonraki hücrede tanımlı"
+    assert "diagnose_endpoint" in source
+    assert "escalate_truncation=False" in source, "ölçüm yükseltmeyi kapatmalı"
+    assert "128" in source and "512" in source
+
+
+def test_probe_warns_when_any_teacher_has_no_content():
+    import json
+    from pathlib import Path
+
+    notebook = json.loads((Path(__file__).resolve().parents[1] / "notebooks" / "kaggle_training.ipynb").read_text())
+    probe = next("".join(c["source"]) for c in notebook["cells"]
+                 if c["cell_type"] == "code" and "PING_BUDGETS =" in "".join(c["source"]))
+    assert "if len(verdict) != len(teachers.teachers):" in probe

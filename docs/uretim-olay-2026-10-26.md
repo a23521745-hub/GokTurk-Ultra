@@ -68,6 +68,10 @@ uyarısı bunun habercisiydi ve görmezden gelindi.
 | 11 | `diagnose_endpoint()` (DNS×3 + TCP + anahtar, enjekte edilebilir I/O) ve `describe_error()` (tür bazlı Türkçe teşhis) | `src/gokturk/teachers.py` |
 | 12 | 3b hücresi: önce tanı, sonra liste; koşulsuz "anahtar yok" cümlesi kaldırıldı; hücrenin opsiyonel olduğu yazılı | `notebooks/kaggle_training.ipynb` |
 | 13 | 6b hücresi elle yazılmış socket tanısı yerine `diagnose_endpoint()` kullanır (tek kaynak) | `notebooks/kaggle_training.ipynb` |
+| 14 | Sağlık denetimi ping bütçesi `8 → 64` token (`HEALTH_CHECK_MAX_TOKENS`); `finish_reason='length'` artık **sağlıklı** sayılır (uç nokta yanıt verdi) | `src/gokturk/teachers.py` |
+| 15 | Bütçe yükseltmesi **en fazla bir kez** (`escalated` bayrağı); 8→16→32→64→… tırmanışı bitti | `src/gokturk/teachers.py` |
+| 16 | `chat(..., escalate_truncation=False)` — ölçüm hücresi hangi bütçenin yettiğini görebilsin | `src/gokturk/teachers.py` |
+| 17 | 6a hücresi `NET_OK`'a bağımlı değil: kendi `diagnose_endpoint()` tanısını yapar; bütçe ölçümü `128/512/2048/4096/8192` | `notebooks/kaggle_training.ipynb` |
 
 ### 2.4 3b hücresi yanlış yeri suçladı
 
@@ -89,6 +93,35 @@ Anahtar **tanımlıydı** (log: `EVREN_API_KEY TANIMLI`). Üç kusur:
 
 Düzeltmeler (bkz. §3 tablo, satır 8–11): `TeacherDnsError` ayrı tip, `list_models`
 retry, `diagnose_endpoint()`, `describe_error()` ve hücrede tür bazlı teşhis.
+
+### 2.5 Sağlık denetimi kendi kendini boğdu (ikinci koşu)
+
+İkinci koşunun logunda üretim başlamadan şu tekrarlandı:
+
+```
+[gokturk.teachers|WARNING] model mimo-v2.6-pro: boş içerik (finish_reason=length),
+                           max_tokens 8 -> 16 ile bir kez daha denenecek
+                           16 -> 32, 32 -> 64, 64 -> 128 ...
+```
+
+Üç ayrı kusur üst üste bindi:
+
+1. **Ping bütçesi 8 token'dı.** Reasoning modeli 8 token'da yalnızca düşünmeye
+   başlar; `content` hiç yazılmaz. Sağlık denetimi bu yüzden kurulum hatası değil,
+   *ölçüm hatası* üretiyordu.
+2. **Yükseltme her kesilmede bir adım daha ekliyordu.** "Tek kademeli yükseltme"
+   tasarımı `max_tokens=8` gibi küçük bir tabanla başlayınca 11 denemeye çıktı
+   (8→16→32→64→128→256→512→1024→2048→4096→8192). Öğretmen başına ~2 dakika.
+3. **Sağlık denetiminin ölçütü yanlıştı.** Soru "uç nokta ayakta ve yetkili mi?";
+   cevabı "tam bir yanıt yazabiliyor mu?" değil. HTTP 200 + geçerli `choices` +
+   doğru model kimliği yeterli. `finish_reason='length'` bir sağlık arızası değil.
+
+Düzeltmeler (bkz. §3 tablo, satır 14–17): ping bütçesi 64, kesilme = sağlıklı,
+yükseltme en fazla bir kez, 6a kendi tanısını yapar ve yükseltmeyi kapatır.
+
+Ayrıca **6a hücresi hiç çalışmamıştı**: `globals().get("NET_OK", False)` kontrolü
+`NET_OK`'ı üreten hücreden (6b) *önce* koşuyordu, yani değişken her zaman yoktu.
+İki koşudur "ağ tanısı başarısız" yazan satır buydu; ağda sorun yoktu.
 
 ## 4. Aynı hata tekrar ederse ne olacak
 
