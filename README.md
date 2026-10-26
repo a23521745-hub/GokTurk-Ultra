@@ -194,6 +194,22 @@ python -m gokturk.publish --serve-plan --base-model Qwen/Qwen3.5-9B --ram-gb 16 
 > bellek değil **disktir**: 9B bf16 ≈18 GB, Kaggle'da 19,2 GB boş alan → ilk
 > gerçek koşu `configs/training_qwen3_5_4b_t4.yaml` (4B, ≈9,3 GB) ile yapılır.
 
+## Çevrimdışı eğitim (internet/DNS gerekmez)
+
+Veri üretimi API'ye muhtaçtır, **eğitim değildir**: taban ağırlıklar yereldeyse
+eğitim internet olmadan koşar.
+
+```bash
+python -m gokturk.train --offline \
+  --config configs/training_qwen3_5_4b_cot_t4.yaml \
+  --model /kaggle/input/qwen35-4b/Qwen3.5-4B \
+  --train-file data/processed/train.jsonl --eval-file data/processed/valid.jsonl
+```
+
+`--offline` ağa hiç çıkmaz; yerel ağırlık veya veri yoksa **açık hata** verip durur
+(9 GB indirmeyi DNS düşmüş makinede denemez). Kaggle'da 7b hücresi bunu otomatik
+yapar; ayrıntı ve sınırlar: [`docs/cevrimdisi-egitim.md`](docs/cevrimdisi-egitim.md).
+
 ## Eğitim
 
 ```bash

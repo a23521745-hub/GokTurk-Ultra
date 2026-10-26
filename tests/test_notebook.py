@@ -236,3 +236,21 @@ def test_incident_report_covers_the_3b_misdiagnosis():
     assert "3b hücresi yanlış yeri suçladı" in body
     for needle in ("TeacherDnsError", "list_models", "diagnose_endpoint", "describe_error"):
         assert needle in body, f"3b bölümünde eksik: {needle}"
+
+
+# ---------------------------------------------------------------------------
+# çevrimdışı eğitim hücresi: DNS düşse de eğitim yanmasın
+# ---------------------------------------------------------------------------
+def test_notebook_has_offline_training_step():
+    text = "".join("".join(c["source"]) for c in json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"])
+    assert "OFFLINE_TRAINING" in text
+    assert "enable_offline_mode" in text
+    assert "offline_report" in text
+    assert "BASE_MODEL_SOURCE" in text, "8. hücre yerel yolu kullanmalı"
+    assert "Internet → Off" in text, "çevrimdışı koşunun nasıl yapıldığı yazmalı"
+
+
+def test_training_cell_uses_base_model_source():
+    source = _cell_with("RUN_PROFILE")
+    assert 'globals().get("BASE_MODEL_SOURCE"' in source
+    assert "(YEREL)" in source and "(HUB)" in source

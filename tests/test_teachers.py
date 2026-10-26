@@ -720,3 +720,110 @@ def test_diagnose_endpoint_without_base_url(provider):
 
     assert result.dns_ok is False
     assert "base_url" in (result.dns_error or "")
+
+
+# ---------------------------------------------------------------------------
+# çevrimdışı eğitim: DNS duvarı eğitimi yakmasın
+# ---------------------------------------------------------------------------
+def _fake_model_dir(root, name="Qwen3.5-4B"):
+    import json
+    from pathlib import Path
+
+    target = Path(root) / name
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "config.json").write_text(json.dumps({"model_type": "qwen3_5"}), encoding="utf-8")
+    return target
+
+
+def test_is_local_model_dir_requires_marker_file(tmp_path):
+    from gokturk.offline import is_local_model_dir
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert is_local_model_dir(empty) is False
+    assert is_local_model_dir(tmp_path / "yok") is False
+
+    _fake_model_dir(tmp_path)
+    assert is_local_model_dir(tmp_path / "Qwen3.5-4B") is True
+
+
+def test_find_local_model_matches_hub_id_shapes(tmp_path):
+    from gokturk.offline import find_local_model
+
+    _fake_model_dir(tmp_path)
+
+    # Hub kimliği -> son parça eşleşir
+    assert find_local_model("Qwen/Qwen3.5-4B", search_roots=[str(tmp_path)]) is not None
+    # Doğrudan yol
+    direct = str(tmp_path / "Qwen3.5-4B")
+    assert find_local_model(direct, search_roots=[]) == direct
+    # Yoksa None
+    assert find_local_model("Qwen/Qwen3.5-9B", search_roots=[str(tmp_path)]) is None
+
+
+def test_find_local_model_finds_nested_dataset_layout(tmp_path):
+    from gokturk.offline import find_local_model
+
+    nested = tmp_path / "some-user" / "qwen35-weights" / "Qwen3.5-4B"
+    nested.mkdir(parents=True)
+    (nested / "model.safetensors").write_text("x", encoding="utf-8")
+
+    assert find_local_model("Qwen/Qwen3.5-4B", search_roots=[str(tmp_path)]) == str(nested)
+
+
+def test_resolve_model_source_offline_fails_fast_when_missing(tmp_path):
+    from gokturk.offline import resolve_model_source
+
+    with pytest.raises(FileNotFoundError, match="yerel kopya bulunamadı"):
+        resolve_model_source("Qwen/Qwen3.5-4B", search_roots=[str(tmp_path)], offline=True)
+    # Çevrimdışı değilse kimlik olduğu gibi döner (indirme denemesi normaldir).
+    assert (
+        resolve_model_source("Qwen/Qwen3.5-4B", search_roots=[str(tmp_path)]) == "Qwen/Qwen3.5-4B"
+    )
+
+
+def test_enable_offline_mode_sets_switch_without_overwriting(tmp_path, monkeypatch):
+    from gokturk.offline import enable_offline_mode
+
+    environ: dict[str, str] = {"HF_HUB_OFFLINE": "0"}
+    applied = enable_offline_mode(environ)
+
+    assert environ["HF_HUB_OFFLINE"] == "0", "kullanıcı ayarı ezilmemeli"
+    assert environ["TRANSFORMERS_OFFLINE"] == "1"
+    assert applied["TRANSFORMERS_OFFLINE"] == "1"
+
+
+def test_offline_report_distinguishes_local_and_hub(tmp_path):
+    from gokturk.offline import offline_report
+
+    data = tmp_path / "train.jsonl"
+    data.write_text("{}\n", encoding="utf-8")
+
+    hub = offline_report("Qwen/Qwen3.5-4B", search_roots=[str(tmp_path)])
+    assert hub.local is False
+    assert hub.network_needed is True
+    assert "AĞ İHTİYACI   : VAR" in hub.render()
+
+    _fake_model_dir(tmp_path)
+    local = offline_report(
+        "Qwen/Qwen3.5-4B", search_roots=[str(tmp_path)], data_files={"train": str(data)}
+    )
+    assert local.local is True
+    assert local.network_needed is False
+    assert local.ok is True
+    assert "YOK (eğitim internet olmadan koşabilir)" in local.render()
+
+
+def test_offline_report_lists_missing_data(tmp_path):
+    from gokturk.offline import offline_report
+
+    _fake_model_dir(tmp_path)
+    report = offline_report(
+        "Qwen/Qwen3.5-4B",
+        search_roots=[str(tmp_path)],
+        data_files={"train": str(tmp_path / "yok.jsonl")},
+    )
+
+    assert report.ok is False
+    assert report.missing_data
+    assert "VERİ EKSİK" in report.render()
