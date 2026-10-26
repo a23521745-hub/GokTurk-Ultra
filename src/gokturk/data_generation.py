@@ -272,6 +272,8 @@ class GenerationStats:
     skipped_existing: int = 0
     aborted: bool = False
     abort_reason: str | None = None
+    #: ``"time-budget"`` = süre doldu, hata yok; aynı komut kaldığı yerden sürer.
+    stop_reason: str | None = None
     reject_reasons: dict[str, int] = field(default_factory=dict)
     teachers_used: dict[str, int] = field(default_factory=dict)
     critique_failures: int = 0
@@ -496,6 +498,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--plan-in", default=None, help="Mevcut planı yeniden kullan")
     parser.add_argument("--candidates", type=int, default=2, help="İstem başına aday yanıt sayısı")
     parser.add_argument("--no-critique", action="store_true", help="Öz-eleştiri/düzeltme adımını kapat")
+    parser.add_argument(
+        "--time-budget-min",
+        type=float,
+        default=None,
+        help=(
+            "Uzun (gözetimsiz) koşular için nazik durma süresi, dakika. Süre dolunca "
+            "slot bitiminde durulur, çıkış kodu 0 olur ve aynı komut kaldığı yerden sürer. "
+            "Kaggle'da oturum sınırından önce durmak için kullanın."
+        ),
+    )
     parser.add_argument("--max-repairs", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--sleep", type=float, default=0.0, help="İstekler arası bekleme (sn)")
@@ -655,6 +667,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 resume=not args.no_resume,
                 sleep_between=args.sleep,
                 write_plan=args.plan_out,
+                time_budget_s=(args.time_budget_min * 60 if args.time_budget_min else None),
             )
             exit_code = 0
         except GenerationAborted as exc:
@@ -667,7 +680,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary["duration_s"] = round(time.time() - started, 1)
         summary["out"] = args.out
         summary["mode"] = "pro"
+        if stats.stop_reason == "time-budget":
+            summary["resume_hint"] = (
+                "Süre bütçesi doldu, hata yok. Aynı komutu tekrar çalıştırın: "
+                "mevcut kayıtlar atlanır (resume) ve üretim kaldığı yerden sürer."
+            )
         print(json.dumps(summary, ensure_ascii=False, indent=2))
+        if stats.stop_reason == "time-budget":
+            print(
+                "\nSüre bütçesi doldu (hata değil). Aynı komutu tekrar çalıştırın: "
+                "resume varsayılan açık.",
+                file=sys.stderr,
+            )
         return exit_code
 
     try:
@@ -904,12 +928,19 @@ def generate_pro(
     resume: bool = True,
     sleep_between: float = 0.0,
     write_plan: str | Path | None = None,
+    time_budget_s: float | None = None,
 ) -> GenerationStats:
     """Professional corpus generation (see module docstring).
 
     Stops safely on authentication errors, request errors and repeated
     transport failures -- exactly like :func:`generate` -- and never writes a
     placeholder answer.
+
+    ``time_budget_s`` is a *graceful* stop for long unattended runs (Kaggle
+    commit has a hard session limit): when it is exhausted the loop exits
+    between two slots, ``stats.stop_reason == "time-budget"`` and nothing is
+    lost, because every accepted record is already flushed to disk and the next
+    run resumes from the existing ids.
     """
     pro = settings or ProSettings()
     pro.validate()
@@ -934,6 +965,7 @@ def generate_pro(
         out.unlink()
 
     abort_after = teachers.provider.abort_after_consecutive_failures
+    deadline = time.monotonic() + time_budget_s if time_budget_s is not None else None
 
     with (
         out.open("a", encoding="utf-8") as out_fh,
@@ -941,6 +973,16 @@ def generate_pro(
         reviewed_path.open("a", encoding="utf-8") as crit_fh,
     ):
         for slot in plan.slots:
+            if deadline is not None and time.monotonic() >= deadline:
+                stats.stop_reason = "time-budget"
+                LOGGER.info(
+                    "Süre bütçesi doldu (%.0f sn): %d slot denendi, %d kabul. "
+                    "Kalan slotlar bir sonraki koşuya kaldı (resume).",
+                    time_budget_s,
+                    stats.requested,
+                    stats.accepted,
+                )
+                break
             stats.requested += 1
             family = get_family(slot.family)
             try:

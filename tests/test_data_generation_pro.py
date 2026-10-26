@@ -346,3 +346,99 @@ def test_sleep_between_is_honoured(tmp_path, monkeypatch):
     pool = ScriptedPool(answers=[GOOD_ANSWER, GOOD_ANSWER])
     _run(tmp_path, pool, target=1, sleep_between=0.01)
     assert slept and all(s == 0.01 for s in slept)
+
+
+# ---------------------------------------------------------------------------
+# süre bütçesi: uzun gözetimsiz koşular (Kaggle) nazikçe durmalı
+# ---------------------------------------------------------------------------
+def test_time_budget_zero_stops_before_any_slot(tmp_path):
+    pool = ScriptedPool()
+    stats, out = _run(tmp_path, pool, target=5, time_budget_s=0)
+
+    assert stats.stop_reason == "time-budget"
+    assert stats.aborted is False, "süre dolması hata değil"
+    assert stats.requested == 0
+    assert pool.calls == [], "hiç istek atılmamalı"
+    assert out.is_file(), "dosya resume için var olmalı"
+
+
+def test_time_budget_not_set_runs_to_completion(tmp_path):
+    pool = ScriptedPool()
+    stats, _out = _run(tmp_path, pool, target=2, time_budget_s=None)
+
+    assert stats.stop_reason is None
+    assert stats.requested == 2
+    assert stats.accepted == 2
+
+
+def test_time_budget_stop_then_resume_skips_existing(tmp_path):
+    """Parçalı koşu sözleşmesi: ilk koşu durur, ikincisi kaldığı yerden sürer."""
+    pool = ScriptedPool()
+    first, out = _run(tmp_path, pool, target=2)
+    assert first.accepted == 2
+
+    second, out2 = _run(tmp_path, pool, target=4, time_budget_s=None)
+
+    assert out2 == out
+    assert second.skipped_existing == 2, "aynı plan yeniden üretilmemeli"
+    assert second.stop_reason is None
+
+
+def test_cli_time_budget_min_is_passed_in_seconds(tmp_path, monkeypatch):
+    from gokturk import data_generation as dg
+
+    captured = {}
+
+    def fake_generate_pro(teachers, **kwargs):
+        captured.update(kwargs)
+        return dg.GenerationStats()
+
+    monkeypatch.setattr(dg, "generate_pro", fake_generate_pro)
+    monkeypatch.setenv("EVREN_API_KEY", "test-key")
+    code = dg.main(
+        [
+            "--mode",
+            "pro",
+            "--target",
+            "10",
+            "--out",
+            str(tmp_path / "pro.jsonl"),
+            "--time-budget-min",
+            "5",
+            "--teachers-config",
+            "configs/teachers.yaml",
+        ]
+    )
+
+    assert code == 0
+    assert captured["time_budget_s"] == 300
+
+
+def test_cli_reports_time_budget_stop_with_resume_hint(tmp_path, monkeypatch, capsys):
+    from gokturk import data_generation as dg
+
+    def fake_generate_pro(teachers, **kwargs):
+        stats = dg.GenerationStats(requested=3, accepted=1, stop_reason="time-budget")
+        return stats
+
+    monkeypatch.setattr(dg, "generate_pro", fake_generate_pro)
+    monkeypatch.setenv("EVREN_API_KEY", "test-key")
+    code = dg.main(
+        [
+            "--mode",
+            "pro",
+            "--target",
+            "10",
+            "--out",
+            str(tmp_path / "pro.jsonl"),
+            "--time-budget-min",
+            "1",
+            "--teachers-config",
+            "configs/teachers.yaml",
+        ]
+    )
+
+    assert code == 0, "nazik durma başarısızlık değil"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stop_reason"] == "time-budget"
+    assert "resume" in payload["resume_hint"].casefold()
