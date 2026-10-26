@@ -105,7 +105,7 @@ def test_notebook_has_real_generation_step(notebook):
     text = "".join("".join(c["source"]) for c in notebook["cells"])
 
     assert "generate_pro" in text, "plan-only ile kalırsa hiç veri üretilmez"
-    assert "GENERATION_TARGET = 2000" in text
+    assert "GENERATION_TARGET = 3" in text
     assert "time_budget_s=TIME_BUDGET_MIN * 60" in text, "süre bütçesi geçirilmeli"
     assert "GenerationAborted" in text, "kota/oturum kesintisi yakalanmalı"
     # Resume: önceki oturumun çıktısı /kaggle/input'tan devralınır.
@@ -257,3 +257,11 @@ def test_probe_warns_when_any_teacher_has_no_content():
     probe = next("".join(c["source"]) for c in notebook["cells"]
                  if c["cell_type"] == "code" and "PING_BUDGETS =" in "".join(c["source"]))
     assert "if len(verdict) != len(teachers.teachers):" in probe
+
+
+def test_production_rejects_intermittent_dns_and_defaults_to_pilot(notebook):
+    code = next("".join(c["source"]) for c in notebook["cells"]
+                if c["cell_type"] == "code" and "RUN_GENERATION =" in "".join(c["source"]))
+    assert "not _diag.dns_intermittent" in code
+    assert "GENERATION_TARGET = 3" in code
+    assert "TIME_BUDGET_MIN = 15" in code
