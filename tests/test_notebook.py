@@ -265,3 +265,11 @@ def test_production_rejects_intermittent_dns_and_defaults_to_pilot(notebook):
     assert "not _diag.dns_intermittent" in code
     assert "GENERATION_TARGET = 3" in code
     assert "TIME_BUDGET_MIN = 15" in code
+
+
+def test_training_is_explicit_opt_in_after_pilot(notebook):
+    code = next("".join(c["source"]) for c in notebook["cells"]
+                if c["cell_type"] == "code" and "RUN_PROFILE =" in "".join(c["source"]))
+    assert "ALLOW_TRAINING = False" in code
+    assert "if not ALLOW_TRAINING:" in code
+    assert code.index("raise SystemExit") < code.index("load_training_config(config_path)")

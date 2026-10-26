@@ -867,7 +867,11 @@ def parse_critique(text: str) -> dict[str, Any] | None:
         return None
     if not isinstance(obj, Mapping):
         return None
-    problems = obj.get("sorunlar", obj.get("problems", []))
+    if "sorunlar" not in obj and "problems" not in obj:
+        return None
+    problems = obj.get("sorunlar", obj.get("problems"))
+    if not isinstance(problems, (list, str)):
+        return None
     repaired = obj.get("duzeltilmis_yanit", obj.get("corrected", ""))
     if not isinstance(problems, list):
         problems = [str(problems)]
@@ -1126,6 +1130,12 @@ def _generate_slot(
     rej_fh,
     crit_fh,
 ) -> None:
+    # Resume must happen BEFORE any paid draft/answer/review request.
+    if any(make_record_id(slot.seed_id, str(t.get("name", "")), slot.variant, family.id)
+           in existing for t in teachers.teachers):
+        stats.skipped_existing += 1
+        return
+
     # ---- 1) draft the user request --------------------------------------
     draft_resp, draft_model = pool.ask_with_fallback(
         family.drafter_system(), family.drafter_user(slot.topic, slot.level, slot.variant)
@@ -1307,9 +1317,12 @@ def _critique_and_repair(
             critique = {**parsed, "repaired": "", "unresolved": bool(parsed["problems"])}
             return critique
 
+        if attempts == 0:
+            return {**parsed, "repaired": "", "unresolved": True}
+
         # A repair is only accepted when it clears the *same* hard validators
-        # and the shared quality gate. Otherwise the original answer is kept and
-        # the rejected repair is recorded for auditing.
+        # and the shared quality gate. Unresolved records are rejected, and
+        # rejected repairs are recorded for auditing.
         repair_problems = family.problems(prompt, repaired)
         if not repair_problems:
             repair_problems = assess_record(

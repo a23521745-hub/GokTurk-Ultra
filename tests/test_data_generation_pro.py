@@ -568,3 +568,23 @@ def test_complete_source_reaches_solver(tmp_path):
     stats, _ = _run(tmp_path, pool, target=1, families=("summarization",))
     assert any(c["kind"] == "answer" for c in pool.calls)
     assert "missing_source_text" not in stats.reject_reasons
+
+
+def test_resume_does_not_repeat_paid_slot_calls(tmp_path):
+    _run(tmp_path, ScriptedPool(), target=2)
+    resumed = ScriptedPool(raise_first=TeacherServerError("must not be called"))
+    stats, _ = _run(tmp_path, resumed, target=2)
+    assert stats.skipped_existing == 2
+    assert resumed.calls == []
+
+
+@pytest.mark.parametrize("raw", ['{}', '{"corrected": "text"}', '{"sorunlar": null}'])
+def test_critique_without_explicit_verdict_is_invalid(raw):
+    assert parse_critique(raw) is None
+
+
+def test_zero_repair_budget_does_not_apply_proposed_repair(tmp_path):
+    pool = ScriptedPool(critiques=[REPAIR_CRITIQUE])
+    stats, _ = _run(tmp_path, pool, target=1, settings=_settings(max_repair_attempts=0))
+    assert stats.accepted == 0
+    assert len([c for c in pool.calls if c["kind"] == "critique"]) == 1

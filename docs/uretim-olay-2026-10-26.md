@@ -186,3 +186,14 @@ Kabul edilen her kayıt INFO günlüğüne yazılır. Pilot sonrasında insan in
 olmadan uzun üretime geçilmemelidir. Önceki 3 çağrı/slot tahmini eksikti:
 taslak + iki aday + eleştiri en az 4 çağrı, düzeltme doğrulaması ek çağrıdır.
 DNS ve sağlayıcı zaman aşımı çözülmüş değildir; canlı Kaggle doğrulaması yapılmadı.
+
+### Son kontrol: kota ve resume
+
+Resume artık tamamlanmış slotu taslak/çözücü/eleştiri çağrılarından **önce** atlar
+(aynı plan ve yapılandırılmış öğretmen kimlikleri için). Önceden dosyaya tekrar
+yazmıyordu ama tüm çağrıları tekrar yapıyordu. Genel sağlık denetimi hâlâ çalışır.
+Eleştiri JSON'unda açık `sorunlar`/`problems` alanı yoksa temiz sonuç sayılmaz;
+`max_repair_attempts=0` önerilen düzeltmeyi uygulamaz.
+Notebook gerçek eğitim adımı varsayılan olarak açık onay bekler
+(`ALLOW_TRAINING=False`); pilot sonrası yanlışlıkla GPU eğitimine geçilmez.
+Öğretmen API üretimi için GPU gerekmez; GPU yalnızca eğitim aşamasında açılmalıdır.
