@@ -509,3 +509,214 @@ def test_unavailable_error_triggers_fallback_teacher(provider, monkeypatch):
 
     assert resp.text == "iyi yanıt"
     assert teacher.name == "good", "ilk öğretmen tükendiğinde diğeri denenmeli"
+
+
+# ---------------------------------------------------------------------------
+# 3b olayı: DNS hatası "timeout" değildir, tek denemede pes edilmez
+# ---------------------------------------------------------------------------
+def _raise_dns_on_urlopen(monkeypatch):
+    """Gerçek taşıma yolunu (urllib) DNS hatası verecek şekilde taklit et."""
+    import socket
+    import urllib.error
+    import urllib.request
+
+    dns = urllib.error.URLError(socket.gaierror(-3, "Temporary failure in name resolution"))
+
+    def fake_urlopen(req, timeout=None):
+        raise dns
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+
+def test_dns_error_is_classified_separately(provider, monkeypatch):
+    """gaierror -> TeacherDnsError; teşhis "DNS" der, "zaman aşımı" demez."""
+    from gokturk.teachers import RETRYABLE_ERRORS, TeacherClient, TeacherDnsError, describe_error
+
+    monkeypatch.setenv(provider.api_key_env, "k")
+    _raise_dns_on_urlopen(monkeypatch)
+    client = TeacherClient(provider, sleep=lambda s: None)
+
+    with pytest.raises(TeacherUnavailableError) as excinfo:
+        client.chat("m", messages=[{"role": "user", "content": "s"}], max_attempts=1)
+
+    # Denemeler tükendiğinde sarmalayıcı hata çıkar, ama nedeni DNS olmalı.
+    assert isinstance(excinfo.value.__cause__, TeacherDnsError)
+    diagnosis = describe_error(excinfo.value)
+    assert diagnosis.startswith("DNS:")
+    assert "anahtarı veya model kimliği sorunu DEĞİL" in diagnosis
+    assert "zaman aşımı" not in diagnosis.casefold()
+    # Retryable kalmalı (TeacherTimeoutError alt sınıfı): aksi hâlde tek sıçrama
+    # koşuyu düşürür. Tuple üyeliği kimlik kontrolü olduğu için issubclass kullanılır.
+    assert any(issubclass(TeacherDnsError, err) for err in RETRYABLE_ERRORS)
+
+
+def test_describe_error_covers_other_kinds(provider):
+    from gokturk.teachers import (
+        TeacherAuthError,
+        TeacherConfigError,
+        TeacherRateLimitError,
+        TeacherServerError,
+        describe_error,
+    )
+
+    assert describe_error(TeacherAuthError("401")).startswith("401/403")
+    assert describe_error(TeacherConfigError("x")).startswith("Yapılandırma")
+    assert describe_error(TeacherRateLimitError("429")).startswith("429")
+    assert describe_error(TeacherServerError("502")).startswith("5xx")
+    assert describe_error(ValueError("?")) == "ValueError: ?"
+
+
+def test_is_dns_error_markers():
+    import socket
+
+    from gokturk.teachers import _is_dns_error
+
+    assert _is_dns_error(socket.gaierror(-3, "Temporary failure in name resolution"))
+    assert _is_dns_error(OSError("[Errno -5] No address associated with hostname"))
+    assert not _is_dns_error(TimeoutError("timed out"))
+    assert not _is_dns_error(None)
+
+
+class FakeGetTransport:
+    """GET taşıması: imza (url, api_key, timeout)."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls: list[dict] = []
+
+    def __call__(self, url, api_key, timeout):
+        self.calls.append({"url": url, "timeout": timeout})
+        if not self.responses:
+            raise AssertionError("FakeGetTransport exhausted")
+        item = self.responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _dns_error():
+    from gokturk.teachers import TeacherDnsError
+
+    return TeacherDnsError("DNS resolution failed: Temporary failure in name resolution")
+
+
+def test_list_models_retries_transient_dns_failure(provider, monkeypatch):
+    """Tek DNS sıçraması 3b hücresini düşürmemeli."""
+    monkeypatch.setenv(provider.api_key_env, "k")
+    models_payload = {"data": [{"id": "mimo-v2.6-pro"}, {"id": "glm-5.3"}]}
+    get = FakeGetTransport([_dns_error(), models_payload])
+    client = TeacherClient(provider, transport=FakeTransport([]), transport_get=get,
+                           sleep=lambda s: None)
+
+    ids = client.list_models(max_attempts=2)
+
+    assert ids == ["mimo-v2.6-pro", "glm-5.3"]
+    assert len(get.calls) == 2
+
+
+def test_list_models_raises_after_retries(provider, monkeypatch):
+    from gokturk.teachers import TeacherDnsError, TeacherUnavailableError
+
+    monkeypatch.setenv(provider.api_key_env, "k")
+    get = FakeGetTransport([_dns_error(), _dns_error(), _dns_error()])
+    client = TeacherClient(provider, transport=FakeTransport([]), transport_get=get,
+                           sleep=lambda s: None)
+
+    with pytest.raises(TeacherUnavailableError) as excinfo:
+        client.list_models(max_attempts=3)
+
+    assert isinstance(excinfo.value.__cause__, TeacherDnsError)
+    assert len(get.calls) == 3, "tek deneme yapmamalı"
+
+
+def test_list_models_does_not_retry_auth_errors(provider, monkeypatch):
+    from gokturk.teachers import TeacherAuthError
+
+    monkeypatch.setenv(provider.api_key_env, "k")
+    get = FakeGetTransport([TeacherAuthError("401")])
+    client = TeacherClient(provider, transport=FakeTransport([]), transport_get=get,
+                           sleep=lambda s: None)
+
+    with pytest.raises(TeacherAuthError):
+        client.list_models(max_attempts=3)
+    assert len(get.calls) == 1, "401 tekrar denenmez"
+
+
+# ---------------------------------------------------------------------------
+# diagnose_endpoint — ağ olmadan test edilebilir
+# ---------------------------------------------------------------------------
+def _diag(provider, **kwargs):
+    from gokturk.teachers import diagnose_endpoint
+
+    return diagnose_endpoint(provider, sleep=lambda s: None, **kwargs)
+
+
+def test_diagnose_endpoint_dns_failure_is_reported_as_dns(provider):
+    def boom(host):
+        raise OSError("[Errno -3] Temporary failure in name resolution")
+
+    result = _diag(provider, resolver=boom)
+
+    assert result.dns_ok is False
+    assert result.dns_failures == 3
+    assert "name resolution" in (result.dns_error or "")
+    text = result.render()
+    assert "BAŞARISIZ" in text
+    assert "API anahtarı sorunu DEĞİL" in text, "yanlış teşhis bir daha yazılmamalı"
+    assert "TCP  : denenmedi" in text
+
+
+def test_diagnose_endpoint_reports_intermittent_dns(provider):
+    calls = {"n": 0}
+
+    def flaky(host):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("Temporary failure in name resolution")
+        return ["195.142.26.68"]
+
+    result = _diag(provider, resolver=flaky, connect=lambda *a, **k: object())
+
+    assert result.dns_ok is True
+    assert result.dns_intermittent is True
+    assert "ARALIKLI" in result.render()
+
+
+def test_diagnose_endpoint_tcp_failure(provider):
+    def refuse(address, **kwargs):
+        raise ConnectionRefusedError("refused")
+
+    result = _diag(provider, resolver=lambda h: ["195.142.26.68"], connect=refuse)
+
+    assert result.dns_ok and not result.tcp_ok
+    assert "TCP  : BAŞARISIZ" in result.render()
+
+
+def test_diagnose_endpoint_missing_key_is_the_only_key_complaint(provider, monkeypatch):
+    monkeypatch.delenv(provider.api_key_env, raising=False)
+
+    result = _diag(provider, resolver=lambda h: ["195.142.26.68"], connect=lambda *a, **k: object())
+    text = result.render()
+
+    assert result.key_present is False
+    assert result.ok is False
+    assert "eksik olan EVREN_API_KEY" in text
+
+
+def test_diagnose_endpoint_healthy(provider, monkeypatch):
+    monkeypatch.setenv(provider.api_key_env, "k")
+
+    result = _diag(provider, resolver=lambda h: ["195.142.26.68"], connect=lambda *a, **k: object())
+
+    assert result.ok is True
+    assert "ÇÖZÜLDÜ" in result.render()
+
+
+def test_diagnose_endpoint_without_base_url(provider):
+    from gokturk.config import ProviderConfig
+
+    empty = ProviderConfig(base_url="")
+    result = _diag(empty)
+
+    assert result.dns_ok is False
+    assert "base_url" in (result.dns_error or "")
