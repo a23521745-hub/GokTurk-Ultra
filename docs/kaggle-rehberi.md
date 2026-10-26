@@ -46,7 +46,7 @@ Bizim defterdeki 12 adım:
 | 1 | Ortam bilgisi | Python sürümü, RAM, `nvidia-smi` ile GPU | saniye |
 | 2 | Paketler | `pip install` (transformers, unsloth…) | 3–8 dk |
 | 3 | Depo + Secrets | Kodu çeker, API anahtarını ortam değişkenine alır | 1 dk |
-| 3b | Kimlik doğrulama | Sağlayıcının `GET /models` listesini çekip `glm-5.3` / `mimo-v2.6-pro` ile karşılaştırır | saniye |
+| 3b | Kimlik doğrulama | Sağlayıcının `GET /models` listesini çekip `mimo-v2.6-pro` ile karşılaştırır | saniye |
 | 4 | Ön denetim | "Bu donanımda ne çalışır?" sorusunun cevabı | 1 dk |
 | 5 | Veri doğrulama | JSONL'i şemaya göre denetler | 1–2 dk |
 | 6 | Veri planı | 10.000 örneklik plan + maliyet (ağa çıkmaz) | saniye |

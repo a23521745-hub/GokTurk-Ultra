@@ -197,3 +197,14 @@ Eleştiri JSON'unda açık `sorunlar`/`problems` alanı yoksa temiz sonuç sayı
 Notebook gerçek eğitim adımı varsayılan olarak açık onay bekler
 (`ALLOW_TRAINING=False`); pilot sonrası yanlışlıkla GPU eğitimine geçilmez.
 Öğretmen API üretimi için GPU gerekmez; GPU yalnızca eğitim aşamasında açılmalıdır.
+
+## V1 kapsam kararı — tek öğretmen MiMo
+
+Operatör kararıyla aktif yapılandırmadan GLM-5.3 çıkarıldı. MiMo-V2.6-Pro
+`general`, `reasoning` ve `code` yönlendirme rollerini birlikte karşılar.
+Roller bir yetenek/lisans kıyaslaması değildir. Yukarıdaki GLM logları tarihsel
+olay kaydı olarak korunmuştur. Aday ve eleştiri aynı modele gider; bağımsız
+öğretmen doğrulaması iddiası yoktur. Ayrı reasoning alanı eğitim hedefi değildir;
+mevcut hat nihai yanıt metnini kullanır. İki aday + eleştiri kontrolleri, 3 slotluk
+pilot ve GPU eğitim onay kapısı korunur. Tek modele geçiş DNS, kapasite veya
+zaman aşımı sorunlarını çözmez; başarısızlıkta başka modele gizli yönlendirme yoktur.

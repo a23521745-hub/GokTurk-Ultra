@@ -5,7 +5,7 @@
 #   * https://evren-llmapi.ssyz.org.tr/v1 — 2026-10-25 tarihli kimliksiz GET,
 #     sağlayıcının kendi {"error": {"message": "API anahtarı eksik"}} yanıtını
 #     döndürdü (yani uç nokta canlı ve OpenAI uyumlu).
-#   * `glm-5.3` ve `mimo-v2.6-pro` — EVREN'in kendi model filosu sayfasında
+#   * `mimo-v2.6-pro` — EVREN'in kendi model filosu sayfasında
 #     (https://evren.ssyz.org.tr/llm-inference) "Çevrimiçi" olarak listeleniyor
 #     ve bağımsız EVREN istemcilerinin model listelerinde aynı kimliklerle
 #     geçiyor. Tarih: 2026-10-25.
@@ -27,8 +27,8 @@ provider:
   api_style: openai-chat
   api_key_env: EVREN_API_KEY
   # 2026-10-26 Kaggle koşusu: 180 sn'lik okuma zaman aşımları saatler yedi ve
-  # tek bir kayıt üretmedi. 120 sn, 4096 token'lık normal bir yanıt için fazlasıyla
-  # yeterli; takılan isteği daha erken keser. Meşru yanıtlar 120 sn'yi aşıyorsa
+  # tek bir kayıt üretmedi. 120 sn ölçümle doğrulanması gereken bir üst bekleme tercihidir;
+  # gerçek üretimde zaman aşımı yine görülebilir. Meşru yanıtlar 120 sn'yi aşıyorsa
   # burayı yükseltin (ölçerek, tahminle değil).
   timeout_s: 120
   max_retries: 4
@@ -43,30 +43,19 @@ provider:
   extra_headers: {}
 
 teachers:
-  # Öğretmen 1 — akıl yürütme, mimari ve ileri Türkçe görevleri
+  # V1: tek öğretmen; adaylar ve eleştiri aynı modelden gelir.
+  # Roller yönlendirme etiketidir, doğrulanmış yetenek karşılaştırması değildir.
   # NOT: `role` yalnızca YÖNLENDİRME ipucudur; model kimliği ve yetenekleri
   # sağlayıcının belgesinden doğrulanmalıdır. Roller: general | reasoning | code
   - name: mimo-v26-pro
     model: "mimo-v2.6-pro"
-    role: "reasoning,general"
+    role: "reasoning,general,code"
     weight: 1.0
     temperature: 0.6
     top_p: 0.95
     # Reasoning modelleri bütçeyi düşünme zincirinde harcayabiliyor; 2048 ile
     # 118 kez boş içerik (finish_reason=length) döndü. 4096 + tek kademeli
     # yükseltme (teachers.MAX_ESCALATED_TOKENS) bu sorunu kapatır.
-    max_tokens: 4096
-
-  # Öğretmen 2 — kodlama, hata ayıklama ve araç çağırma görevleri
-  # NOT: Bu rolde başlangıçta Kimi-K3 planlanmıştı; EVREN'in model listesinde
-  # Kimi bulunmadığı için (operatör bilgisi, 2026-10) GLM-5.3 ile
-  # değiştirilmiştir. Kodlama/ajan yetenekleri bu rolün gereksinimini karşılar.
-  - name: glm-53
-    model: "glm-5.3"
-    role: "code,general"
-    weight: 1.0
-    temperature: 0.7
-    top_p: 0.95
     max_tokens: 4096
 
 generation_prompt_version: v1

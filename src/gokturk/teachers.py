@@ -985,7 +985,8 @@ class TeacherPool:
                 raise
             except RETRYABLE_ERRORS as exc:
                 last_error = exc
-                LOGGER.warning("öğretmen %s başarısız (%s); diğeri denenecek", teacher.name, exc)
+                LOGGER.warning("öğretmen %s başarısız (%s); kalan öğretmen sayısı: %d",
+                               teacher.name, exc, len(self.models) - len(tried))
                 continue
             resp.teacher_name = teacher.name
             self._failures_in_a_row = 0
