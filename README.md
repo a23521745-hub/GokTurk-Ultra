@@ -70,6 +70,25 @@ python -m gokturk.data_quality --data data/processed/train.jsonl \
   --review-sample 30 --review-out reports/review.md
 ```
 
+## Hazır CoT verisiyle eğitim (`data/datasets/evren_cot_10k.jsonl`)
+
+Depoda 10.000 satırlık CoT dosyası var. Eğitim şemasında **değildir**; önce çevrilir:
+
+```bash
+# 1) instruction/thinking_process/response -> prompt/response (+ tekilleştirme, kalite kapısı, bölme)
+python -m gokturk.cot_dataset --input data/datasets/evren_cot_10k.jsonl --out-dir data/processed
+# -> train 1271 / valid 28 / test 27 + data/processed/cot_report.json
+
+# 2) Plan: 4B sığıyor mu, disk yetiyor mu, kaç adım
+python -m gokturk.train --config configs/training_qwen3_5_4b_cot_t4.yaml --plan-only
+```
+
+**Ölçülmüş gerçek:** 10.000 satır yalnızca **920 tekil talimat** içerir (etkin
+çeşitlilik %9,2). Hepsiyle eğitim ~10 epoch aynı örnekleri tekrarlamak olur; bu
+yüzden araç varsayılan olarak tekilleştirir ve ~1.300 örnek bırakır. Bu dosya
+tek başına genel Türkçe talimat takibi öğretmez — ayrıntı, ölçüm tablosu ve
+dürüst beklenti: [`docs/veri-seti-hazirlama.md`](docs/veri-seti-hazirlama.md).
+
 ## Profesyonel sentetik veri seti (PRO modu)
 
 On görev ailesi — kodlama, hata ayıklama, akıl yürütme, **ileri düzey Türkçe**,
@@ -216,8 +235,10 @@ denetim raporu, metrikler).
 **Accelerator → GPU T4 x2**, **Internet → On** seçin, Secrets'a `EVREN_*`
 değişkenlerini ekleyin. Notebook sırasıyla ortamı denetler, Unsloth dahil
 paketleri kurar, veriyi doğrular, sentetik veri planını gösterir, duman testini
-çalıştırır, iki arka ucu ön denetimden geçirir ve uygun olanla **60 adımlık
-ölçüm koşusu** yapar. Hiçbiri uygun değilse dürüstçe durur ve nedenini yazar
+çalıştırır, iki arka ucu ön denetimden geçirir. 5b hücresi depodaki CoT dosyasını
+şemaya çevirirse 8. hücre **CoT profilini** (`configs/training_qwen3_5_4b_cot_t4.yaml`)
+seçer ve adım sayısını veriden hesaplar (`örnek × epoch / 16`, 60–1500); dosya
+yoksa 4 örneklik boru hattı koşusunda kalır. Hiçbiri uygun değilse dürüstçe durur ve nedenini yazar
 (bkz. `docs/architecture.md` §6–7).
 
 Kaggle'da daha önce bulunmadıysanız veya log okumak zor geliyorsa:

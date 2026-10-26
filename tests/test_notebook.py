@@ -122,7 +122,9 @@ def test_notebook_generation_never_fakes_data_without_a_key(notebook):
 def test_notebook_computes_training_steps_from_data(notebook):
     text = "".join("".join(c["source"]) for c in notebook["cells"])
     assert "max_steps = 60" not in text, "sabit adım sayısı ezberlemeye yol açar"
-    assert "_raw_steps" in text and "min(1500" in text
+    # Tek kaynak: gokturk.cot_dataset.training_steps_for (60-1500 arasına sıkıştırır).
+    assert "training_steps_for" in text
+    assert "run_cfg.optimization.max_steps = _steps" in text
 
 
 def test_production_runbook_is_linked(notebook):

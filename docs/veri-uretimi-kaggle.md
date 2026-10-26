@@ -53,6 +53,17 @@ python -m gokturk.data_generation --mode pro --target 2000 \
   --out data/raw/pro.jsonl --time-budget-min 540
 ```
 
+### Klonlanan kod süre bütçesini desteklemiyorsa
+
+Notebook 3. hücresi depoyu `main`'den çeker. `generate_pro(..., time_budget_s=...)`
+henüz `main`'de yoksa 6b hücresi **parçalı koşuya** düşer: 30 slotluk parçalar
+halinde üretir, her parça arasında saati kontrol eder ve bütçe dolunca durur.
+Resume sayesinde parçalar birbirinin üstüne yazmaz. Yani süre bütçesi olmayan bir
+`main` ile de gözetimsiz koşu güvenlidir — sadece ilerleme çıktısı daha sık olur.
+
+Tek çağrılı (daha temiz) yol için `main`'de bu özellik bulunmalı; ya PR birleşir
+ya da 3. hücrede `REPO_BRANCH` ilgili dala çevrilir.
+
 ## 3. Yarıda kalırsa / ikinci oturum
 
 1. İlk oturumun çıktısını **Kaggle Dataset** olarak kaydedin
