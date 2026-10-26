@@ -867,7 +867,11 @@ def parse_critique(text: str) -> dict[str, Any] | None:
         return None
     if not isinstance(obj, Mapping):
         return None
-    problems = obj.get("sorunlar", obj.get("problems", []))
+    if "sorunlar" not in obj and "problems" not in obj:
+        return None
+    problems = obj.get("sorunlar", obj.get("problems"))
+    if not isinstance(problems, (list, str)):
+        return None
     repaired = obj.get("duzeltilmis_yanit", obj.get("corrected", ""))
     if not isinstance(problems, list):
         problems = [str(problems)]
@@ -923,6 +927,11 @@ def build_record_pro(
             "candidates_tried": candidates_tried,
             "critique_problems": list(critique.get("problems", [])) if critique else [],
             "repaired": bool(critique and critique.get("repaired")),
+            "repair_verified": bool(critique and critique.get("verification") is not None
+                                    and not critique.get("unresolved")),
+            "repair_teacher": critique.get("repair_teacher") if critique else None,
+            "repair_model": critique.get("repair_model") if critique else None,
+            "repair_response_meta": critique.get("repair_response_meta") if critique else None,
             "soft_notes": {k: v for k, v in soft_notes.items()},
             "latency_s": response_meta.get("latency_s"),
             "usage": response_meta.get("usage", {}),
@@ -1121,6 +1130,12 @@ def _generate_slot(
     rej_fh,
     crit_fh,
 ) -> None:
+    # Resume must happen BEFORE any paid draft/answer/review request.
+    if any(make_record_id(slot.seed_id, str(t.get("name", "")), slot.variant, family.id)
+           in existing for t in teachers.teachers):
+        stats.skipped_existing += 1
+        return
+
     # ---- 1) draft the user request --------------------------------------
     draft_resp, draft_model = pool.ask_with_fallback(
         family.drafter_system(), family.drafter_user(slot.topic, slot.level, slot.variant)
@@ -1138,6 +1153,17 @@ def _generate_slot(
         )
         rej_fh.flush()
         return
+
+    if family.id in {"summarization", "rewrite", "translation"}:
+        import re
+
+        source = re.search(r"<kaynak>(.*?)</kaynak>", prompt, re.DOTALL)
+        if source is None or len(source.group(1).strip()) < 40:
+            stats.reject("missing_source_text")
+            rej_fh.write(json.dumps({"slot": slot.to_dict(), "reason": "missing_source_text",
+                                     "prompt": prompt}, ensure_ascii=False) + "\n")
+            rej_fh.flush()
+            return
 
     # ---- 2) sample N candidates -----------------------------------------
     candidates: list[tuple[str, Any, Any, list[str]]] = []
@@ -1194,6 +1220,8 @@ def _generate_slot(
 
     # ---- 4) final validation --------------------------------------------
     final_problems = family.problems(prompt, response_text)
+    if pro.critique and (critique is None or critique.get("unresolved")):
+        final_problems.append("eleştiri doğrulanamadı veya çözülmemiş sorunlar var")
     if final_problems:
         stats.reject(final_problems[0])
         rej_fh.write(
@@ -1245,6 +1273,7 @@ def _generate_slot(
     out_fh.flush()
     existing.add(record["id"])
     stats.accepted += 1
+    LOGGER.info("Kayıt yazıldı: %s | bu koşuda kabul: %d", record["id"], stats.accepted)
     stats.teachers_used[best_teacher.name] = stats.teachers_used.get(best_teacher.name, 0) + 1
 
 
@@ -1264,7 +1293,7 @@ def _critique_and_repair(
     current = response
     for _ in range(max(1, attempts + 1)):
         try:
-            resp, _teacher = pool.ask_with_fallback(
+            resp, repair_teacher = pool.ask_with_fallback(
                 CRITIQUE_SYSTEM,
                 CRITIQUE_USER.format(
                     task_type=family.id,
@@ -1277,20 +1306,23 @@ def _critique_and_repair(
         except RETRYABLE_ERRORS as exc:
             LOGGER.warning("eleştiri adımı başarısız: %s", exc)
             stats.critique_failures += 1
-            return critique
+            return {"unresolved": True, "repaired": ""}
         parsed = parse_critique(resp.text)
         if parsed is None:
             stats.critique_failures += 1
-            return critique
+            return {"unresolved": True, "repaired": ""}
         repaired = parsed["repaired"]
         if not parsed["problems"] or not repaired:
             # Nothing to fix: keep the answer untouched.
-            critique = {**parsed, "repaired": ""}
+            critique = {**parsed, "repaired": "", "unresolved": bool(parsed["problems"])}
             return critique
 
+        if attempts == 0:
+            return {**parsed, "repaired": "", "unresolved": True}
+
         # A repair is only accepted when it clears the *same* hard validators
-        # and the shared quality gate. Otherwise the original answer is kept and
-        # the rejected repair is recorded for auditing.
+        # and the shared quality gate. Unresolved records are rejected, and
+        # rejected repairs are recorded for auditing.
         repair_problems = family.problems(prompt, repaired)
         if not repair_problems:
             repair_problems = assess_record(
@@ -1308,10 +1340,27 @@ def _critique_and_repair(
                 **parsed,
                 "repaired": "",
                 "rejected_repair_problems": repair_problems,
+                "unresolved": True,
             }
             continue
-        critique = {**parsed, "repaired": repaired}
-        return critique
+        # A second review checks the actual replacement, not the original.
+        try:
+            verification, _ = pool.ask_with_fallback(
+                CRITIQUE_SYSTEM,
+                CRITIQUE_USER.format(task_type=family.id, prompt=prompt,
+                                     response=repaired, criteria=_criteria_for(family)),
+                role=role,
+            )
+            checked = parse_critique(verification.text)
+        except RETRYABLE_ERRORS:
+            checked = None
+        if checked is None or checked["problems"]:
+            stats.rejected_repairs += 1
+            return {**parsed, "repaired": "", "unresolved": True,
+                    "verification": checked}
+        return {**parsed, "repaired": repaired, "unresolved": False,
+                "verification": checked, "repair_teacher": repair_teacher.name,
+                "repair_model": repair_teacher.model, "repair_response_meta": resp.as_metadata()}
     return critique
 
 

@@ -58,6 +58,7 @@ _DRAFTER_RULES = (
     "- İstek, cevabı verilecek asıl görevi içerecek; role-play yönergesi olmayacak.\n"
     "- Somut bir çıktı biçimi ve kapsam isteyecek (uzunluk, madde sayısı, dil, seviye).\n"
     "- Daha önce üretilmiş örneklerden belirgin biçimde farklı olacak.\n"
+    "- Özetleme, yeniden yazma ve çeviri görevlerinde kaynak metnin tamamını <kaynak>...</kaynak> içinde ver; dışarıdan metin bekleme.\n"
     "- Yalnızca JSON döndür: {{\"prompt\": \"<Türkçe kullanıcı isteği>\"}}\n"
 )
 
@@ -609,7 +610,7 @@ _register(
         max_response_chars=3000,
         preferred_roles=("general",),
         answer_suffix=SUMMARY_SUFFIX,
-        drafter_extra="İstek, özetlenecek metni veya metnin türünü ve istenen uzunluğu belirtmeli.",
+        drafter_extra="İstek, özetlenecek gerçek kaynak metnin tamamını <kaynak>...</kaynak> etiketleri arasında içermeli; yalnızca metin türü belirtmek yeterli değil. İstenen uzunluğu da belirtmeli.",
         weight=0.7,
     )
 )

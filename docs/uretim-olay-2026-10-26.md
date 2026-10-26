@@ -163,3 +163,37 @@ Sıra bu yüzden sabit: **merge → notebook güncelle → 6a → 6b → 6c**. 6
 * Düzeltmeler gerçek uç noktaya karşı **doğrulanmadı** (bu ortamda anahtar yok).
   İlk gerçek koşuda önce **6a** hücresi çalıştırılmalı: hangi token bütçesinde
   içerik geldiğini gösterir.
+
+## 2.6 İki kayıt oluştu; içerik denetimi yeni kusurları gösterdi
+
+Kullanıcının paylaştığı iki satır incelendi: özetleme isteğinde abstract yoktu;
+öğretmenin metni istemesi doğru olsa da bu kayıt özetleme örneği değildi.
+Şablondaki “metni veya metnin türünü” ifadesi eksik girdiye izin veriyordu.
+Artık özetleme/yeniden yazma/çeviri taslaklarında `<kaynak>...</kaynak>` içinde
+kaynak zorunlu (en az 40 karakter); eksikse çözücü çağrılmadan ret dosyasına yazılır.
+Bu yapısal kontrol kaynak doğruluğunu veya yeterliliğini kanıtlamaz.
+
+İkinci kayıtta eleştirinin bulduğu çok-adımlı çözüm önerisi, düzeltmede de kalmıştı.
+Sert biçim kontrolleri semantik sorunu yakalamadı. Düzeltme artık ayrı bir öğretmen
+çağrısında yeniden incelenir; sorun sürüyorsa, eleştiri okunamıyorsa veya doğrulama
+isteği başarısızsa kayıt kabul edilmez. Bu bir model denetimidir, insan onayı değildir.
+Düzeltmeyi üreten öğretmen/model ve çağrı metaverisi ayrıca tutulur; aday çağrı
+metaverisi tüm pipeline maliyetini temsil etmez.
+
+Notebook kararsız DNS'i kabul etmez; varsayılan üretim 3 slot/15 dakika pilotudur.
+Süre sınırı slotlar arasında uygulanır, kesin duvar-saati sınırı değildir.
+Kabul edilen her kayıt INFO günlüğüne yazılır. Pilot sonrasında insan incelemesi
+olmadan uzun üretime geçilmemelidir. Önceki 3 çağrı/slot tahmini eksikti:
+taslak + iki aday + eleştiri en az 4 çağrı, düzeltme doğrulaması ek çağrıdır.
+DNS ve sağlayıcı zaman aşımı çözülmüş değildir; canlı Kaggle doğrulaması yapılmadı.
+
+### Son kontrol: kota ve resume
+
+Resume artık tamamlanmış slotu taslak/çözücü/eleştiri çağrılarından **önce** atlar
+(aynı plan ve yapılandırılmış öğretmen kimlikleri için). Önceden dosyaya tekrar
+yazmıyordu ama tüm çağrıları tekrar yapıyordu. Genel sağlık denetimi hâlâ çalışır.
+Eleştiri JSON'unda açık `sorunlar`/`problems` alanı yoksa temiz sonuç sayılmaz;
+`max_repair_attempts=0` önerilen düzeltmeyi uygulamaz.
+Notebook gerçek eğitim adımı varsayılan olarak açık onay bekler
+(`ALLOW_TRAINING=False`); pilot sonrası yanlışlıkla GPU eğitimine geçilmez.
+Öğretmen API üretimi için GPU gerekmez; GPU yalnızca eğitim aşamasında açılmalıdır.

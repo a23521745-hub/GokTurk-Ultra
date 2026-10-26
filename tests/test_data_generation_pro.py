@@ -250,7 +250,7 @@ def test_role_routing_is_requested(tmp_path):
 def test_critique_repair_is_applied_when_it_passes(tmp_path):
     pool = ScriptedPool(
         answers=[WEAK_ANSWER, GOOD_ANSWER],
-        critiques=[REPAIR_CRITIQUE],
+        critiques=[REPAIR_CRITIQUE, CLEAN_CRITIQUE],
     )
     stats, out = _run(tmp_path, pool, target=1)
     assert stats.accepted == 1
@@ -266,10 +266,8 @@ def test_repair_is_rejected_when_it_fails_validators(tmp_path):
     )
     pool = ScriptedPool(answers=[GOOD_ANSWER, GOOD_ANSWER], critiques=[bad_repair])
     stats, out = _run(tmp_path, pool, target=1)
-    assert stats.accepted == 1
-    record = json.loads(out.read_text(encoding="utf-8").strip())
-    assert "```python" in record["response"]
-    assert record["meta"]["repaired"] is False
+    assert stats.accepted == 0
+    assert not out.read_text(encoding="utf-8").strip()
     assert stats.rejected_repairs >= 1
 
 
@@ -538,3 +536,55 @@ def test_healthy_pool_passes_health_check_and_generates(tmp_path):
     pool = HealthyPool()
     stats, _out = _run(tmp_path, pool, target=2)
     assert stats.accepted == 2
+
+
+@pytest.mark.parametrize("family", ["summarization", "rewrite", "translation"])
+def test_source_required_before_spending_solver_calls(tmp_path, family):
+    pool = ScriptedPool(drafts=[json.dumps({"prompt": "Lütfen metnin türüne uygun bir özet yaz."})])
+    stats, out = _run(tmp_path, pool, target=1, families=(family,))
+    assert stats.accepted == 0
+    assert stats.reject_reasons["missing_source_text"] == 1
+    assert not any(c["kind"] == "answer" for c in pool.calls)
+
+
+def test_repeated_semantic_criticism_rejects_repair(tmp_path):
+    pool = ScriptedPool(answers=[GOOD_ANSWER], critiques=[REPAIR_CRITIQUE])
+    stats, out = _run(tmp_path, pool, target=1)
+    assert stats.accepted == 0
+    assert not out.read_text().strip()
+    assert stats.rejected_repairs > 0
+
+
+def test_malformed_critique_is_not_silently_accepted(tmp_path):
+    pool = ScriptedPool(answers=[GOOD_ANSWER], critiques=["not json"])
+    stats, out = _run(tmp_path, pool, target=1)
+    assert stats.accepted == 0
+    assert stats.critique_failures == 1
+
+
+def test_complete_source_reaches_solver(tmp_path):
+    prompt = "Metni özetle: <kaynak>" + ("Ekip raporu inceledi ve teslim tarihini cuma olarak belirledi. " * 4) + "</kaynak>"
+    pool = ScriptedPool(drafts=[json.dumps({"prompt": prompt})], answers=[GOOD_ANSWER])
+    stats, _ = _run(tmp_path, pool, target=1, families=("summarization",))
+    assert any(c["kind"] == "answer" for c in pool.calls)
+    assert "missing_source_text" not in stats.reject_reasons
+
+
+def test_resume_does_not_repeat_paid_slot_calls(tmp_path):
+    _run(tmp_path, ScriptedPool(), target=2)
+    resumed = ScriptedPool(raise_first=TeacherServerError("must not be called"))
+    stats, _ = _run(tmp_path, resumed, target=2)
+    assert stats.skipped_existing == 2
+    assert resumed.calls == []
+
+
+@pytest.mark.parametrize("raw", ['{}', '{"corrected": "text"}', '{"sorunlar": null}'])
+def test_critique_without_explicit_verdict_is_invalid(raw):
+    assert parse_critique(raw) is None
+
+
+def test_zero_repair_budget_does_not_apply_proposed_repair(tmp_path):
+    pool = ScriptedPool(critiques=[REPAIR_CRITIQUE])
+    stats, _ = _run(tmp_path, pool, target=1, settings=_settings(max_repair_attempts=0))
+    assert stats.accepted == 0
+    assert len([c for c in pool.calls if c["kind"] == "critique"]) == 1
