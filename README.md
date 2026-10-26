@@ -138,7 +138,8 @@ python -m gokturk.data_generation --mode pro --target 2000 \
 ```
 
 Kaggle'da gözetimsiz koşu (6b/6c hücreleri) ve iki oturumlu devam akışı:
-[`docs/veri-uretimi-kaggle.md`](docs/veri-uretimi-kaggle.md).
+[`docs/veri-uretimi-kaggle.md`](docs/veri-uretimi-kaggle.md) · 2026-10-26 olayı ve
+düzeltmeler: [`docs/uretim-olay-2026-10-26.md`](docs/uretim-olay-2026-10-26.md)
 
 ## Eğitim verisi üretimi (basic mod, API anahtarı gerekir)
 

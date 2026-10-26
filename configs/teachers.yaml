@@ -26,13 +26,19 @@ provider:
   base_url: "https://evren-llmapi.ssyz.org.tr/v1"
   api_style: openai-chat
   api_key_env: EVREN_API_KEY
-  timeout_s: 180
+  # 2026-10-26 Kaggle koşusu: 180 sn'lik okuma zaman aşımları saatler yedi ve
+  # tek bir kayıt üretmedi. 120 sn, 4096 token'lık normal bir yanıt için fazlasıyla
+  # yeterli; takılan isteği daha erken keser. Meşru yanıtlar 120 sn'yi aşıyorsa
+  # burayı yükseltin (ölçerek, tahminle değil).
+  timeout_s: 120
   max_retries: 4
   backoff_base_s: 2.0
   backoff_max_s: 60.0
   # Sağlayıcının belgelenmiş oran sınırına göre ayarlayın.
   requests_per_minute: 15
-  max_attempts_per_sample: 3
+  # 3 yerine 2: aynı isteği 3 kez denemek, hata deterministikse sadece zaman
+  # kaybettirir. Boş yanıtta zaten ayrı bir "token bütçesini yükselt" denemesi var.
+  max_attempts_per_sample: 2
   abort_after_consecutive_failures: 8
   extra_headers: {}
 
@@ -46,7 +52,10 @@ teachers:
     weight: 1.0
     temperature: 0.6
     top_p: 0.95
-    max_tokens: 2048
+    # Reasoning modelleri bütçeyi düşünme zincirinde harcayabiliyor; 2048 ile
+    # 118 kez boş içerik (finish_reason=length) döndü. 4096 + tek kademeli
+    # yükseltme (teachers.MAX_ESCALATED_TOKENS) bu sorunu kapatır.
+    max_tokens: 4096
 
   # Öğretmen 2 — kodlama, hata ayıklama ve araç çağırma görevleri
   # NOT: Bu rolde başlangıçta Kimi-K3 planlanmıştı; EVREN'in model listesinde
@@ -58,6 +67,6 @@ teachers:
     weight: 1.0
     temperature: 0.7
     top_p: 0.95
-    max_tokens: 2048
+    max_tokens: 4096
 
 generation_prompt_version: v1

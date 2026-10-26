@@ -4,6 +4,16 @@ Amaç: GLM-5.3 + MiMo-V2.6-Pro'yu **öğretmen** olarak kullanıp Qwen3.5-4B ö�
 için gerçek bir SFT veri seti üretmek. Bu belge o koşunun nasıl başlatıldığını,
 nasıl yarıda kalıp devam ettiğini ve ne kadar sürdüğünü anlatır.
 
+## Önce oku: 2026-10-26 olayı
+
+İlk gece koşusu 5,7 saat çalıştı ve **0 kayıt** üretti (DNS hataları, 180 sn
+zaman aşımları, `finish_reason='length'` ile boş yanıtlar) ve güvenlik frenleri
+tetiklenmedi. Kök nedenler ve düzeltmeler: [`uretim-olay-2026-10-26.md`](uretim-olay-2026-10-26.md).
+
+**Artık koşu başlamadan önce 6a hücresi çalıştırılır** (2 dakika): iki öğretmen için
+2048/4096/8192 token bütçeleriyle tek istek atar, hangisinde içerik geldiğini
+gösterir. 6b ise ağ tanısı (DNS + TCP 443) düşerse hiç başlamaz.
+
 ## 0. Sayılar nereden geliyor
 
 `--plan-only` ile ölçüldü (ağa çıkmaz):

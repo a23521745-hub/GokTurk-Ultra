@@ -316,6 +316,7 @@ def generate(
     pool: TeacherPool | None = None,
     sleep_between: float = 0.0,
     max_records: int | None = None,
+    health_check: bool = True,
 ) -> GenerationStats:
     """Run the pipeline. Returns stats; raises on fatal teacher errors."""
     qcfg = quality or QualityConfig()
@@ -326,6 +327,25 @@ def generate(
 
     teacher_pool = pool or TeacherPool(teachers, client=client)
     stats = GenerationStats()
+
+    _health = getattr(teacher_pool, "health_check", None)
+    if health_check and callable(_health):
+        # Tek küçük istek: uç nokta/DNS ölüyse 6 saat değil 10 saniye kaybedin.
+        report = _health()
+        if not report.get("ok"):
+            details = "; ".join(
+                f"{name}: {entry.get('detail', '?')}"
+                for name, entry in report.get("teachers", {}).items()
+                if not entry.get("ok")
+            )
+            stats.aborted = True
+            stats.abort_reason = (
+                "ön sağlık denetimi başarısız, hiçbir slot denenmedi "
+                f"({details or 'bilinmeyen neden'})"
+            )
+            stats.stop_reason = "health-check-failed"
+            LOGGER.error("%s", stats.abort_reason)
+            raise GenerationAborted(stats.abort_reason, stats)
     existing = _existing_ids(out) if resume else set()
     if not resume and out.exists():
         out.unlink()
@@ -499,6 +519,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--candidates", type=int, default=2, help="İstem başına aday yanıt sayısı")
     parser.add_argument("--no-critique", action="store_true", help="Öz-eleştiri/düzeltme adımını kapat")
     parser.add_argument(
+        "--zero-yield-abort-after",
+        type=int,
+        default=3,
+        help=(
+            "Bu kadar slot denendikten sonra tek bir kayıt bile kabul edilmediyse koşuyu "
+            "durdur (varsayılan 3; 0 = kapat). Öğretmen erişilemezse saatlerce boş dönmeyi "
+            "önler."
+        ),
+    )
+    parser.add_argument(
         "--time-budget-min",
         type=float,
         default=None,
@@ -668,6 +698,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sleep_between=args.sleep,
                 write_plan=args.plan_out,
                 time_budget_s=(args.time_budget_min * 60 if args.time_budget_min else None),
+                zero_yield_abort_after=args.zero_yield_abort_after,
             )
             exit_code = 0
         except GenerationAborted as exc:
@@ -929,6 +960,8 @@ def generate_pro(
     sleep_between: float = 0.0,
     write_plan: str | Path | None = None,
     time_budget_s: float | None = None,
+    zero_yield_abort_after: int = 3,
+    health_check: bool = True,
 ) -> GenerationStats:
     """Professional corpus generation (see module docstring).
 
@@ -941,6 +974,12 @@ def generate_pro(
     between two slots, ``stats.stop_reason == "time-budget"`` and nothing is
     lost, because every accepted record is already flushed to disk and the next
     run resumes from the existing ids.
+
+    ``zero_yield_abort_after`` is the safety net for the opposite failure: a run
+    that is *working* but produces nothing (endpoint unreachable, every answer
+    truncated). After that many slots with no accepted record the run aborts
+    instead of grinding for hours -- exactly the 2026-10-26 Kaggle failure, which
+    spent 5,7 hours and produced 0 records. Pass ``0`` to disable.
     """
     pro = settings or ProSettings()
     pro.validate()
@@ -960,6 +999,27 @@ def generate_pro(
 
     teacher_pool = pool or TeacherPool(teachers, client=client)
     stats = GenerationStats()
+
+    _health = getattr(teacher_pool, "health_check", None)
+    if health_check and callable(_health):
+        # Tek küçük istek: uç nokta/DNS ölüyse 6 saat değil 10 saniye kaybedin.
+        # (2026-10-26: 5,7 saat, 0 kayıt.)
+        report = _health()
+        if not report.get("ok"):
+            details = "; ".join(
+                f"{name}: {entry.get('detail', '?')}"
+                for name, entry in report.get("teachers", {}).items()
+                if not entry.get("ok")
+            )
+            stats.aborted = True
+            stats.abort_reason = (
+                "ön sağlık denetimi başarısız, hiçbir slot denenmedi "
+                f"({details or 'bilinmeyen neden'})"
+            )
+            stats.stop_reason = "health-check-failed"
+            LOGGER.error("%s", stats.abort_reason)
+            raise GenerationAborted(stats.abort_reason, stats)
+
     existing = _existing_ids(out) if resume else set()
     if not resume and out.exists():
         out.unlink()
@@ -1018,9 +1078,28 @@ def generate_pro(
                 stats.aborted = True
                 stats.abort_reason = f"{type(exc).__name__}: {exc}"
                 raise GenerationAborted(stats.abort_reason, stats) from exc
-            except TeacherError as exc:  # pragma: no cover - defensive
+            except TeacherError as exc:
+                # Buraya düşen bir hata da bir hatadır: sayaç artmazsa abort eşiği
+                # hiç dolmaz ve koşu saatlerce boş döner (2026-10-26 vakası).
                 stats.failed += 1
+                consecutive = teacher_pool.register_failure()
                 LOGGER.warning("Beklenmeyen öğretmen hatası: %s", exc)
+                if consecutive >= abort_after:
+                    stats.aborted = True
+                    stats.abort_reason = (
+                        f"{consecutive} ardışık hata; öğretmen kullanılamıyor gibi görünüyor"
+                    )
+                    raise GenerationAborted(stats.abort_reason, stats) from exc
+
+            if zero_yield_abort_after and stats.accepted == 0:
+                if stats.requested >= zero_yield_abort_after:
+                    stats.aborted = True
+                    stats.abort_reason = (
+                        f"sıfır verim: {stats.requested} slot denendi, tek bir kayıt kabul "
+                        f"edilmedi ({stats.failed} hata, {stats.rejected} ret). Öğretmen bu "
+                        "yapılandırmayla kullanılamıyor; saatlerce boş dönmek yerine duruldu."
+                    )
+                    raise GenerationAborted(stats.abort_reason, stats)
             if sleep_between:
                 time.sleep(sleep_between)
 

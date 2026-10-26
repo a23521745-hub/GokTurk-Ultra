@@ -135,3 +135,55 @@ def test_production_runbook_is_linked(notebook):
         assert needle in body, f"runbook eksik: {needle}"
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "veri-uretimi-kaggle.md" in readme
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-26 olayı: ağ tanısı, sıfır-verim sigortası, ilerleme günlüğü
+# ---------------------------------------------------------------------------
+def test_notebook_diagnoses_network_before_generating(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+    assert "gethostbyname" in text, "DNS tanısı olmadan 6 saat boşa gidebilir"
+    assert "create_connection" in text
+    assert "evren-llmapi.ssyz.org.tr" in text
+    assert "NET_OK" in text
+
+
+def test_notebook_stops_on_zero_yield(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+    assert "ZERO_YIELD_ABORT_AFTER" in text
+    assert "zero_yield_abort_after" in text
+    assert "abort_reason" in text, "sessiz döngü yerine neden yazdırılmalı"
+    assert "HİÇ KAYIT ÜRETİLMEDİ" in text
+
+
+def test_notebook_writes_a_progress_log(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+    assert "progress.log" in text
+    assert "FileHandler" in text
+
+
+def test_notebook_has_single_call_probe(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+    assert "6a) Öğretmen ölçümü" in text
+    assert "for budget in (2048, 4096, 8192)" in text
+
+
+def test_incident_report_is_documented_and_linked():
+    doc = ROOT / "docs" / "uretim-olay-2026-10-26.md"
+    assert doc.is_file()
+    body = doc.read_text(encoding="utf-8")
+    for needle in ("5,7 saat", "0 kayıt", "TeacherUnavailableError", "zero_yield_abort_after",
+                   "MAX_ESCALATED_TOKENS", "health-check-failed"):
+        assert needle in body, f"olay raporunda eksik: {needle}"
+    assert "uretim-olay-2026-10-26.md" in (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "uretim-olay-2026-10-26.md" in (
+        ROOT / "docs" / "veri-uretimi-kaggle.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_incident_report_states_the_remaining_limits():
+    body = (ROOT / "docs" / "uretim-olay-2026-10-26.md").read_text(encoding="utf-8")
+    # Düzeltmelerin neyi ÇÖZMEDİĞİ de yazılı olmalı.
+    assert "DNS sorunu çözülmedi" in body
+    assert "hâlâ tahmin" in body
+    assert "gerçek uç nokta doğrulaması yapılmadı" in body
