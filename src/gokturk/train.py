@@ -308,11 +308,26 @@ def load_model_and_tokenizer(cfg: TrainingConfig, dtype: str):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    from .offline import is_local_model_dir, resolve_model_source, search_roots_from_env
+
+    # Yerel kopya varsa (/kaggle/input altında) ağa hiç çıkılmaz: DNS düşse de
+    # eğitim başlar. Kimlik verilmişse eskisi gibi Hub'dan indirilir.
+
+    source = resolve_model_source(
+        cfg.model.name_or_path,
+        search_roots=search_roots_from_env(),
+        offline=os.environ.get("HF_HUB_OFFLINE") == "1",
+    )
+    local_only = is_local_model_dir(source)
+    if source != cfg.model.name_or_path:
+        LOGGER.info("Yerel model kullanılıyor: %s -> %s", cfg.model.name_or_path, source)
+
     quant_config = build_quantization_config(cfg)
     tokenizer = AutoTokenizer.from_pretrained(
-        cfg.model.name_or_path,
+        source,
         trust_remote_code=cfg.model.trust_remote_code,
         use_fast=True,
+        local_files_only=local_only,
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -327,7 +342,9 @@ def load_model_and_tokenizer(cfg: TrainingConfig, dtype: str):
     else:
         model_kwargs["torch_dtype"] = _torch_dtype(dtype)
 
-    model = AutoModelForCausalLM.from_pretrained(cfg.model.name_or_path, **model_kwargs)
+    model = AutoModelForCausalLM.from_pretrained(
+        source, local_files_only=local_only, **model_kwargs
+    )
     if quant_config is None and torch.cuda.is_available():
         model = model.to("cuda")
     return model, tokenizer
@@ -787,6 +804,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="CPU'da bilinçli mini koşu (≤1B model, kısa LoRA); ön denetim engellemez",
     )
     parser.add_argument("--skip-preflight", action="store_true", help="Engelleyici bulguları yok say")
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help=(
+            "Ağa hiç çıkma: HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE kurulur ve taban ağırlıklar "
+            "YEREL bir dizinden (ör. /kaggle/input altındaki bir Dataset) yüklenir. "
+            "Yerel kopya yoksa eğitim sessizce indirmeye çalışmaz, açık hata verir."
+        ),
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -818,6 +844,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         cfg.data.train_file = args.train_file
     if args.eval_file:
         cfg.data.eval_file = args.eval_file
+
+    if args.offline:
+        # Denetim, CLI'dan gelen --model/--train-file/--eval-file uygulandıktan SONRA
+        # yapılır: aksi hâlde config'teki varsayılan yollar denetlenirdi.
+        from .offline import enable_offline_mode, offline_report
+
+        enable_offline_mode()
+        report = offline_report(
+            cfg.model.name_or_path,
+            data_files={
+                "train": cfg.data.train_file,
+                "valid": cfg.data.eval_file,
+            },
+        )
+        print(report.render())
+        if not report.local:
+            print(
+                "\nHata: --offline istendi ama model yerel değil. Ağırlıkları bir Kaggle "
+                "Dataset/Model olarak ekleyin veya --offline vermeden çalıştırın.",
+                file=sys.stderr,
+            )
+            return 4
+        if report.missing_data:
+            print(
+                "\nHata: --offline istendi ama veri dosyaları eksik: "
+                + ", ".join(report.missing_data),
+                file=sys.stderr,
+            )
+            return 4
 
     return run_training(
         cfg,
