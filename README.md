@@ -108,6 +108,19 @@ Doğrulayıcılar **biçimi** denetler (JSON şeması, kod bloğu + dil, Türkç
 uzunluk, akıl yürütme sızıntısı, araç çağrısı anahtarları). Anlamsal doğruluk
 otomatik ölçülmez — insan incelemesi zorunludur (`docs/architecture.md` §4–5).
 
+**Uzun koşular** (2.000 slot ≈ 6.000 çağrı ≈ 6,7 saat @15 istek/dk) süre bütçesiyle
+kesilebilir ve kaldığı yerden sürer:
+
+```bash
+python -m gokturk.data_generation --mode pro --target 2000 \
+  --out data/raw/pro.jsonl --time-budget-min 540
+# süre dolunca: stop_reason="time-budget", çıkış kodu 0 (hata değil)
+# aynı komutu tekrar çalıştırın -> mevcut id'ler atlanır (resume)
+```
+
+Kaggle'da gözetimsiz koşu (6b/6c hücreleri) ve iki oturumlu devam akışı:
+[`docs/veri-uretimi-kaggle.md`](docs/veri-uretimi-kaggle.md).
+
 ## Eğitim verisi üretimi (basic mod, API anahtarı gerekir)
 
 ```bash

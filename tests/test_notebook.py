@@ -96,3 +96,40 @@ def test_notebook_does_not_claim_a_trained_model(notebook):
     assert "kalite iddiası" in text or "kalite sonucu" in text
     for forbidden in ("doğruluk oranı %", "accuracy %", "benchmark skoru:"):
         assert forbidden not in text
+
+
+# ---------------------------------------------------------------------------
+# gerçek üretim hücresi (2.000 slot, süre bütçeli, devam ettirilebilir)
+# ---------------------------------------------------------------------------
+def test_notebook_has_real_generation_step(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+
+    assert "generate_pro" in text, "plan-only ile kalırsa hiç veri üretilmez"
+    assert "GENERATION_TARGET = 2000" in text
+    assert "time_budget_s=TIME_BUDGET_MIN * 60" in text, "süre bütçesi geçirilmeli"
+    assert "GenerationAborted" in text, "kota/oturum kesintisi yakalanmalı"
+    # Resume: önceki oturumun çıktısı /kaggle/input'tan devralınır.
+    assert 'rglob("pro.jsonl")' in text and "shutil.copy2" in text
+    assert "resume=True" in text
+
+
+def test_notebook_generation_never_fakes_data_without_a_key(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+    assert "EVREN_API_KEY" in text
+    assert "sahte veri ÜRETMEZ" in text
+
+
+def test_notebook_computes_training_steps_from_data(notebook):
+    text = "".join("".join(c["source"]) for c in notebook["cells"])
+    assert "max_steps = 60" not in text, "sabit adım sayısı ezberlemeye yol açar"
+    assert "_raw_steps" in text and "min(1500" in text
+
+
+def test_production_runbook_is_linked(notebook):
+    doc = ROOT / "docs" / "veri-uretimi-kaggle.md"
+    assert doc.is_file()
+    body = doc.read_text(encoding="utf-8")
+    for needle in ("2.000", "≈6,7 saat", "--time-budget-min", "stop_reason", "resume"):
+        assert needle in body, f"runbook eksik: {needle}"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "veri-uretimi-kaggle.md" in readme
