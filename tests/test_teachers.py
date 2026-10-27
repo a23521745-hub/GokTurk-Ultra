@@ -830,3 +830,22 @@ def test_v1_failed_mimo_does_not_call_another_model(monkeypatch):
         pool.ask_with_fallback("sistem", "istek", role="code")
     assert transport.calls
     assert {c["payload"]["model"] for c in transport.calls} == {"mimo-v2.6-pro"}
+
+
+def test_diagnosis_checks_all_dns_samples_even_after_success(provider):
+    from gokturk.teachers import diagnose_endpoint
+
+    calls = []
+
+    def resolver(host):
+        calls.append(host)
+        if len(calls) == 2:
+            raise OSError("intermittent DNS")
+        return ["192.0.2.1"]
+
+    result = diagnose_endpoint(provider, resolver=resolver,
+                               connect=lambda *a, **k: object(), attempts=3, sleep=lambda _: None)
+    assert len(calls) == 3
+    assert result.dns_attempts == 3
+    assert result.dns_failures == 1
+    assert result.dns_intermittent
