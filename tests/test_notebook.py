@@ -274,3 +274,10 @@ def test_training_is_explicit_opt_in_after_pilot(notebook):
     assert "ALLOW_TRAINING = False" in code
     assert "if not ALLOW_TRAINING:" in code
     assert code.index("raise SystemExit") < code.index("load_training_config(config_path)")
+
+
+def test_dns_configuration_precedes_model_endpoint_checks(notebook):
+    cell = next("".join(c["source"]) for c in notebook["cells"]
+                if c["cell_type"] == "code" and "configure_public_dns()" in "".join(c["source"]))
+    assert cell.index("configure_public_dns()") < cell.index("diagnose_endpoint(")
+    assert "DNS DEĞİŞTİRİLEMEDİ" in cell

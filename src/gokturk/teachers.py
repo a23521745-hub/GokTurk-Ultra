@@ -770,7 +770,8 @@ def diagnose_endpoint(
             continue
         diagnosis.addresses = found
         diagnosis.dns_error = None
-        break
+        if attempt < attempts:
+            wait(pause_s)
 
     if not diagnosis.dns_ok:
         return diagnosis
